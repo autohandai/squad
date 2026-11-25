@@ -7,6 +7,7 @@ import { createMobileService } from './service.mjs';
 import { createMobileHTTP } from './http.mjs';
 import { createMobileAdapter } from './adapter.mjs';
 import { createMobileRelay } from './relay.mjs';
+import { createMobileICloud, resolveICloudHelper } from './icloud.mjs';
 import { pairingURL, validateEndpoint } from './protocol.mjs';
 import { assignMemberTask } from '../routes/work.route.mjs';
 import { emitBridgeEvent } from '../events.mjs';
@@ -15,12 +16,14 @@ import { createCardStore } from './cards.mjs';
 // Independent routes (ADR-0228): the same computer can listen on the local
 // network, keep the Autohand relay connected, and serve a user-operated tunnel
 // at once. `enabled` is the master switch that keeps pairings when off.
+// `icloud` (ADR-0255) defaults off, so every file saved before it parses
+// unchanged and no computer starts the helper until the person asks.
 const configuration = z.object({
-  enabled: z.boolean(), local: z.boolean(), relay: z.boolean(), tunnel: z.boolean(),
+  enabled: z.boolean(), local: z.boolean(), relay: z.boolean(), tunnel: z.boolean(), icloud: z.boolean().default(false),
   endpoint: z.string().max(1000).default(''), port: z.number().int().min(0).max(65535).default(29323),
 }).strict();
 const legacyConfiguration = z.object({ enabled: z.boolean(), mode: z.enum(['local', 'tunnel', 'relay']), endpoint: z.string().max(1000).default(''), port: z.number().int().min(0).max(65535).default(29323) }).strict();
-const defaults = { enabled: false, local: true, relay: true, tunnel: false, endpoint: '', port: 29323 };
+const defaults = { enabled: false, local: true, relay: true, tunnel: false, icloud: false, endpoint: '', port: 29323 };
 
 /**
  * A saved 0.1 file had one exclusive `mode`. Upgrading keeps the local listener
@@ -48,12 +51,14 @@ export async function createMobileController(ctx) {
   const saved = await readPersistentJson(file, defaults);
   let config = migrateSavedConfiguration(saved);
   if (saved !== defaults && 'mode' in saved) await writePersistentJson(file, config);
-  let server = null, relay = null, error = '', transition = Promise.resolve(), adapter;
+  let server = null, relay = null, icloud = null, error = '', transition = Promise.resolve(), adapter;
   // Phone preferences, kept apart from the connection config so changing one
   // never restarts the phone routes (ADR-0256 amendment).
   const preferencesFile = join(directory, 'preferences.json');
   const preferenceSchema = z.object({ confirmPhoneAdds: z.boolean().default(true) });
   let preferences = preferenceSchema.parse(await readPersistentJson(preferencesFile, {}).catch(() => ({})));
+  // Resolved once: the nested helper exists only in a macOS app bundle.
+  const icloudHelper = ctx.icloudHelperPath ?? resolveICloudHelper();
   const localEndpoint = () => server?.listening && config.local && localAddress() ? `http://${localAddress()}:${server.address().port}` : '';
   const tunnelEndpoint = () => server?.listening && config.tunnel && config.endpoint ? config.endpoint : '';
   /** Every route this computer serves right now, most direct first. */
@@ -63,11 +68,16 @@ export async function createMobileController(ctx) {
     if (tunnelEndpoint()) list.push({ kind: 'tunnel', endpoint: tunnelEndpoint(), connected: true });
     const relayed = relay?.status();
     if (relayed?.endpoint) list.push({ kind: 'relay', endpoint: relayed.endpoint, connected: relayed.connected });
+    // iCloud has no endpoint: the phone reaches it through its own CloudKit
+    // container, after every other route (ADR-0255, squad-mobile ADR-0007).
+    if (icloud?.status().connected) list.push({ kind: 'icloud', connected: true });
     return list;
   }
+  const hasEndpoint = route => route.kind === 'local' || route.kind === 'tunnel';
   /** Routes for one approved phone; a relay route carries that phone's own grant. */
   function deviceRoutes(deviceID) {
     return routes().map(({ kind, endpoint }) => {
+      if (kind === 'icloud') return { kind };
       if (kind !== 'relay') return { kind, endpoint };
       const token = relay?.status().roomID ? service.relayGrant(deviceID, relay.status().roomID) : undefined;
       return { kind, endpoint, ...(token ? { relayToken: token } : {}) };
@@ -83,7 +93,7 @@ export async function createMobileController(ctx) {
       if (!server?.listening) throw Error('Reconnect the relay before approving this phone.');
     },
     afterApprove: () => { void relay?.grant().catch(() => {}); },
-    afterRevoke: id => relay?.revoke(id),
+    afterRevoke: id => { icloud?.revoke(id); return relay?.revoke(id); },
   });
   const cards = await createCardStore({ directory });
   adapter = createMobileAdapter({ preferences: () => preferences, origin: ctx.ownedBrokerOrigin, computerID: service.computerID, version: ctx.packageMetadata.version, assignTask: assignMemberTask, announcements: ctx.announcements,
@@ -91,6 +101,7 @@ export async function createMobileController(ctx) {
   const listening = () => routes().some(route => route.connected);
   async function close() {
     relay?.close(); relay = null;
+    icloud?.close(); icloud = null;
     const previous = server; server = null;
     if (previous) await new Promise(resolve => { previous.close(resolve); previous.closeAllConnections(); });
   }
@@ -112,13 +123,20 @@ export async function createMobileController(ctx) {
       relay = createMobileRelay({ service, identity: ctx.mobileRelayIdentity, ownerScope: scope });
       await relay.start();
     }
+    // Never fails the other routes: a missing or unsigned helper only shows
+    // as the iCloud row's state.
+    if (value.icloud && icloudHelper) {
+      icloud = createMobileICloud({ service, helperPath: icloudHelper, ...(ctx.icloudSpawn ? { spawnImpl: ctx.icloudSpawn } : {}) });
+      icloud.start();
+    }
   }
   try { await start(config); } catch (failure) { error = failure.message; }
   const status = () => {
     const list = routes();
     // `endpoint` stays for older callers: the route an older phone would get.
-    const primary = list.find(route => route.kind === 'relay' && route.connected) || list.find(route => route.kind !== 'relay') || list[0];
-    return { ...service.status(), config, preferences, listening: listening(), routes: list, endpoint: primary?.endpoint || '', error: error || relay?.status().error || '' };
+    const primary = list.find(route => route.kind === 'relay' && route.connected) || list.find(hasEndpoint) || list.find(route => route.endpoint);
+    const icloudStatus = icloud?.status() || { available: Boolean(icloudHelper), state: 'off', detail: '', connected: false };
+    return { ...service.status(), config, preferences, listening: listening(), routes: list, endpoint: primary?.endpoint || '', icloud: icloudStatus, error: error || relay?.status().error || '' };
   };
   return {
     status,
@@ -126,6 +144,7 @@ export async function createMobileController(ctx) {
       const action = transition.then(async () => {
         const next = requestedConfiguration(input);
         if (next.enabled && !next.local && !next.relay && !next.tunnel) throw Error('Choose at least one way for phones to connect.');
+        if (next.icloud && !icloudHelper) throw Error('This build of Squad cannot use iCloud for phones.');
         if (next.tunnel) {
           next.endpoint = validateEndpoint(next.endpoint);
           if (new URL(next.endpoint).pathname !== '/') throw Error('Use your tunnel’s HTTPS origin without a path.');
@@ -146,7 +165,8 @@ export async function createMobileController(ctx) {
     },
     offer: async () => {
       await transition;
-      const ready = routes().filter(route => route.connected);
+      // A QR needs an address; iCloud alone cannot pair (ADR-0255).
+      const ready = routes().filter(route => route.connected && route.kind !== 'icloud');
       if (!ready.length) throw Error('Enable a connection and wait for it to connect first.');
       const relayReady = ready.some(route => route.kind === 'relay');
       const offer = await service.createOffer(async metadata => {
@@ -157,10 +177,14 @@ export async function createMobileController(ctx) {
         // direct routes, which keeps the QR small enough to scan comfortably.
         return relayed ? { ...relayed, routes: direct } : { endpoint: direct[0].endpoint, routes: direct.slice(1) };
       });
+      // The same offer for a phone on this Apple Account, published only on
+      // this explicit click; it expires with the QR (ADR-0007).
+      if (icloud?.status().connected) icloud.offer(offer);
       return { link: pairingURL(offer), expiresAt: offer.expiresAt, computerName: offer.computerName };
     },
-    approve: async input => { const value = z.object({ pairingID: z.uuid(), code: z.string().regex(/^\d{6}$/) }).strict().parse(input); await service.approve(value.pairingID, value.code); return status(); },
-    reject: async () => { await service.reject(); return status(); },
+    approve: async input => { const value = z.object({ pairingID: z.uuid(), code: z.string().regex(/^\d{6}$/) }).strict().parse(input); await service.approve(value.pairingID, value.code); icloud?.withdrawOffer(); return status(); },
+    reject: async () => { await service.reject(); icloud?.withdrawOffer(); return status(); },
+    icloudMeasurements: () => icloud ? icloud.measurements() : { helper: null, requestAgeMs: { count: 0, p50: null, p95: null } },
     revoke: async id => { await service.revoke(z.uuid().parse(id)); return status(); },
     teamDecisions: () => ({ decisions: adapter.teamDecisions() }),
     claimTeam: async input => ({ claimed: await adapter.claimTeam(z.object({ receiptId: z.string().min(1).max(200) }).strict().parse(input).receiptId) }),

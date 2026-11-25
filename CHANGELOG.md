@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Added
+
+- **Phones through iCloud (preview, off by default).** Squad can carry your paired iPhone's messages through your own iCloud when Wi-Fi and the relay can't reach this Mac, with no Autohand server in between. It appears as a fourth switch, Through iCloud, in Settings › Computers only in builds that include the Squad iCloud helper; current builds don't, and nothing changes for them. It needs the same Apple Account on both devices and has not yet been tried against real iCloud.
+
 ## [0.1.24] - 2026-11-25
 
 ### Fixed

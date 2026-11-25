@@ -17,7 +17,7 @@ const ago = (value, now) => {
 /** "Active now on Wi-Fi", "Last seen 2 h ago from anywhere", or nothing known yet. */
 export function phonePresence(device, now = Date.now()) {
   if (!device?.lastSeenAt || !Number.isFinite(Date.parse(device.lastSeenAt))) return { active: false, text: "Not seen since Squad started" };
-  const via = device.lastSeenVia === "relay" ? "from anywhere" : "on this Wi-Fi";
+  const via = device.lastSeenVia === "relay" ? "from anywhere" : device.lastSeenVia === "icloud" ? "through iCloud" : "on this Wi-Fi";
   return now - Date.parse(device.lastSeenAt) < ACTIVE_MS
     ? { active: true, text: `Active now ${via}` }
     : { active: false, text: `Last seen ${ago(device.lastSeenAt, now)} ${via}` };

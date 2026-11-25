@@ -39,3 +39,6 @@ src-tauri/gen/
 
 # Bird art masters (1024px PNG, ADR-0271): kept on the machine, never committed
 assets/characters/
+# iCloud helper build outputs (ADR-0255)
+native/icloud-helper/.build/
+src-tauri/helpers/
