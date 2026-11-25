@@ -73,6 +73,27 @@ try {
   assert.match(JSON.stringify(await request('member.update', { memberID: voiced.id, expectedRevision: edited.data.revision, name: '   ' })), /needs a name/);
   assert.match(JSON.stringify(await request('member.update', { memberID: voiced.id, expectedRevision: edited.data.revision, avatar: '/x.png' })), /"ok":false/, 'only the profile fields are editable');
   assert.match(JSON.stringify(await request('member.update', { memberID: voiced.id, expectedRevision: edited.data.revision })), /Change a field/);
+  // Contract 0.11 (ADR-0281): personality, skills and the avatar from the phone.
+  assert.ok(snapshot.data.capabilities.includes('profileEdits'), 'the host offers avatar, personality and skill edits');
+  const personal = await request('member.update', { memberID: voiced.id, expectedRevision: edited.data.revision, personality: 'Dry humour, short answers.' });
+  assert.equal(personal.ok, true, JSON.stringify(personal));
+  assert.equal(personal.data.personality, 'Dry humour, short answers.');
+  assert.match((await bridge.api(`/api/control-plane/members/${encodeURIComponent(voiced.id)}`)).data.personality, /^# Personality\n\nRole: Phone-edited role\n\nDry humour, short answers\.$/, 'the computer saved the personality as its PERSONALITY.md');
+  assert.ok(Array.isArray(personal.data.skillIDs) && personal.data.maxSkills === 32 && personal.data.limits.personality > 0);
+  const catalog = await request('member.skills', { memberID: voiced.id, query: '' });
+  assert.equal(catalog.ok, true, JSON.stringify(catalog));
+  assert.ok(Array.isArray(catalog.data.skills) && typeof catalog.data.hasMore === 'boolean', 'the phone can list skills for the member');
+  const cleared = await request('member.update', { memberID: voiced.id, expectedRevision: personal.data.revision, skills: [] });
+  assert.equal(cleared.ok, true, JSON.stringify(cleared)); assert.deepEqual(cleared.data.skillIDs, []);
+  assert.match(JSON.stringify(await request('member.update', { memberID: voiced.id, expectedRevision: cleared.data.revision, skills: Array.from({ length: 33 }, (_, i) => `s${i}`) })), /"ok":false/, 'at most 32 skills');
+  const kea = await request('member.avatar.set', { memberID: voiced.id, bird: 'kea', expectedRevision: cleared.data.revision });
+  assert.equal(kea.ok, true, JSON.stringify(kea));
+  assert.equal(kea.data.avatar, '/avatars/birds/kea.webp', 'the phone chose the kea');
+  assert.ok(kea.data.revision > cleared.data.revision, 'an avatar change bumps the revision');
+  assert.equal((await request('member.profile', { memberID: voiced.id })).data.avatar, '/avatars/birds/kea.webp', 'the profile reads the new avatar back');
+  assert.match(JSON.stringify(await request('member.avatar.set', { memberID: voiced.id, bird: 'kea', expectedRevision: cleared.data.revision })), /changed/i, 'a stale avatar change is refused');
+  assert.match(JSON.stringify(await request('member.avatar.set', { memberID: voiced.id, bird: 'dragon', expectedRevision: kea.data.revision })), /birds/, 'only cast birds');
+  assert.match(JSON.stringify(await request('member.avatar.set', { memberID: voiced.id, bird: 'https://x', expectedRevision: kea.data.revision })), /"ok":false/, 'never a URL');
   // Contract 0.7 (ADR-0272): the phone draws members in the computer's avatar style.
   assert.equal(snapshot.data.appearance?.avatarStyle, 'flat', 'the snapshot carries the default avatar style');
   assert.equal((await bridge.api('/api/system/settings', 'PUT', { avatarStyle: 'clay' })).success, true);

@@ -9,7 +9,7 @@ import { harnessLabel } from '../../src/lib/harness.js';
 import { birdFromAvatar } from '../../src/lib/bird-cast.js';
 import { normalizeModelRouting, primaryRoute, routeKey } from '../../src/lib/model-routing.js';
 import { isGroupChat } from '../../src/lib/group-chats.js';
-import { PROFILE_LIMITS } from '../../src/lib/member-shaping.js';
+import { PROFILE_LIMITS, personalityFromFile } from '../../src/lib/member-shaping.js';
 import { needsResponderPick, resolveMentions, resolveResponderRecipients } from '../../src/lib/channel-responders.js';
 import { PERMISSION_DECISIONS, permissionCard, permissionOutcome, scheduleCard, teamCard } from './cards.mjs';
 import { createPhoneMarketplace } from './marketplace.mjs';
@@ -28,16 +28,19 @@ const messageStatus = status => status === 'loading' || status === 'queued' || s
 const clip = (text, limit) => { const value = String(text || '').replace(/\s+/g, ' ').trim(); return value.length > limit ? `${value.slice(0, limit - 1)}…` : value; };
 
 const memberID = z.object({ memberID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/) });
-/** What the phone shows and edits of a member's profile (contract 0.10). */
-function phoneProfile(id, profile, context) {
+/** What the phone shows and edits of a member's profile (contract 0.10; 0.11
+ * adds the avatar, personality and skill ids the phone edits, ADR-0281). */
+function phoneProfile(id, profile, context, avatar = '') {
   const skills = (Array.isArray(profile?.skills) ? profile.skills : []).map(skill => typeof skill === 'string' ? skill : skill?.name || skill?.id || '').filter(Boolean).slice(0, 40);
+  const skillIDs = (Array.isArray(profile?.skills) ? profile.skills : []).map(skill => typeof skill === 'string' ? skill : skill?.id || '').filter(Boolean).slice(0, 32);
   return {
+    avatar: phoneAvatar(avatar), skillIDs, maxSkills: 32,
     memberID: id, revision: Number(profile?.revision) || 0,
     name: String(profile?.name || ''), role: String(profile?.role || ''),
     description: String(profile?.description || ''), instructions: String(profile?.instructions || ''),
-    personality: clip(profile?.personality, 1200), skills, workspace: String(profile?.workspace || ''),
+    personality: personalityFromFile(profile?.personality).slice(0, PROFILE_LIMITS.personality * 2), skills, workspace: String(profile?.workspace || ''),
     harness: harnessLabel(profile?.harness?.id || 'autohand'), voice: voiceById(profile?.voice)?.id || '',
-    limits: { name: PROFILE_LIMITS.name, role: PROFILE_LIMITS.role, description: PROFILE_LIMITS.description, instructions: PROFILE_LIMITS.instructions },
+    limits: { name: PROFILE_LIMITS.name, role: PROFILE_LIMITS.role, description: PROFILE_LIMITS.description, instructions: PROFILE_LIMITS.instructions, personality: PROFILE_LIMITS.personality },
     canEdit: Boolean(context?.canWrite),
   };
 }
@@ -52,6 +55,7 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
   // the installed app serves dist/, a checkout also has public/.
   const birdDirs = rootDir ? [join(rootDir, 'dist', 'avatars', 'birds', '256'), join(rootDir, 'public', 'avatars', 'birds', '256')] : [];
   const avatarOf = (channels, status, id) => channels?.agentChannelAccess?.[id]?.agent?.avatar || (status?.members || []).find(row => row?.id === id)?.avatar || '';
+  const currentAvatar = async id => avatarOf(await bridge.get('/api/channels').catch(() => null), await bridge.get('/api/status/snapshot').catch(() => null), id);
   const groupsOf = state => (state?.channels || []).filter(isGroupChat);
   function groupMessages(state, id) {
     return (state?.messages || []).filter(message => message?.channelId === id && message.body)
@@ -233,7 +237,7 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
             lastMessageAt: last?.createdAt || null, preview: last ? { author: last.role === 'user' ? 'You' : last.authorName || last.agentId || 'Member', text: clip(last.body, 140) } : null };
         }).sort((a, b) => String(b.lastMessageAt || b.createdAt).localeCompare(String(a.lastMessageAt || a.createdAt))).slice(0, 50);
         return { computer: { id: computerID, name: computerName, version, connectedAt: new Date().toISOString() },
-          capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : []), ...(rootDir ? ['avatars'] : []), ...(channels ? ['groups'] : []), ...(cards ? ['cards', 'inbox'] : []), 'marketplace', 'feedback', 'voices', 'profiles'],
+          capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : []), ...(rootDir ? ['avatars'] : []), ...(channels ? ['groups'] : []), ...(cards ? ['cards', 'inbox'] : []), 'marketplace', 'feedback', 'voices', 'profiles', 'profileEdits'],
           ...(context.actor ? { account: { id: context.actor.id, name: context.actor.name || '', email: context.actor.email || '' } } : {}),
           members: members.map(row => {
             const remote = (Array.isArray(remotes) ? remotes : remotes?.members || []).find(remote => remote.memberId === row.id);
@@ -379,13 +383,31 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
       if (command === 'member.profile') {
         const { memberID: id } = memberID.strict().parse(parameters);
         await member(id);
-        const [profile, context] = await Promise.all([bridge.get(`/api/control-plane/members/${encodeURIComponent(id)}`), bridge.get('/api/ownership/context')]);
-        return phoneProfile(id, profile, context);
+        const [profile, context, avatar] = await Promise.all([bridge.get(`/api/control-plane/members/${encodeURIComponent(id)}`), bridge.get('/api/ownership/context'), currentAvatar(id)]);
+        return phoneProfile(id, profile, context, avatar);
+      }
+      if (command === 'member.skills') {
+        const { memberID: id, query, offset } = memberID.extend({ query: z.string().max(200).default(''), offset: z.number().int().min(0).max(100000).default(0) }).strict().parse(parameters);
+        await member(id);
+        const profile = await bridge.get(`/api/control-plane/members/${encodeURIComponent(id)}`);
+        const catalog = await bridge.get(`/api/skills/catalog?${new URLSearchParams({ q: query, workspace: profile.workspace || '', offset: String(offset) })}`);
+        return { skills: (catalog.skills || []).filter(skill => !skill.unavailable).map(skill => ({ id: String(skill.id), name: clip(skill.name || skill.id, 80),
+          category: clip(skill.category, 60), description: clip(skill.description || skill.manifest?.description, 280), local: skill.local === true })),
+          total: Number(catalog.total) || 0, hasMore: catalog.hasMore === true };
+      }
+      if (command === 'member.avatar.set') {
+        const { memberID: id, bird, expectedRevision } = memberID.extend({ bird: z.string().regex(/^[a-z]{1,40}$/), expectedRevision: z.number().int().min(0) }).strict().parse(parameters);
+        const context = await bridge.get('/api/ownership/context');
+        if (!context?.canWrite) throw Error('This Squad is read-only here; change the avatar on the computer.');
+        await member(id);
+        const saved = await bridge.put(`/api/control-plane/members/${encodeURIComponent(id)}/avatar`, { bird, expectedRevision });
+        return phoneProfile(id, saved, context, saved.avatar);
       }
       if (command === 'member.update') {
         const text = limit => z.string().max(limit * 2);
         const input = memberID.extend({ expectedRevision: z.number().int().min(0), name: text(PROFILE_LIMITS.name).optional(), role: text(PROFILE_LIMITS.role).optional(),
-          description: text(PROFILE_LIMITS.description).optional(), instructions: text(PROFILE_LIMITS.instructions).optional() }).strict().parse(parameters);
+          description: text(PROFILE_LIMITS.description).optional(), instructions: text(PROFILE_LIMITS.instructions).optional(),
+          personality: text(PROFILE_LIMITS.personality).optional(), skills: z.array(z.string().trim().min(1).max(500)).max(32).optional() }).strict().parse(parameters);
         const { memberID: id, expectedRevision, ...fields } = input;
         if (!Object.keys(fields).length) throw Error('Change a field before saving.');
         if (fields.name !== undefined && !fields.name.trim()) throw Error('A member needs a name.');
@@ -393,7 +415,7 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
         if (!context?.canWrite) throw Error('This Squad is read-only here; edit the profile on the computer.');
         await member(id);
         const saved = await bridge.patch(`/api/control-plane/members/${encodeURIComponent(id)}`, { ...fields, expectedRevision });
-        return phoneProfile(id, saved, context);
+        return phoneProfile(id, saved, context, await currentAvatar(id));
       }
       if (command === 'feedback.send') {
         const input = z.object({ kind: z.enum(['bug', 'feedback']), summary: z.string().min(8).max(200), detail: z.string().max(8000).optional(),

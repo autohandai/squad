@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Added
+
+- **Change a member's avatar, personality and skills from your iPhone.** In Squad for iPhone, a member's Edit Profile now also picks one of Squad's 300 birds, edits the personality and chooses skills from the ones on this computer. The change is saved here, like an edit made in this window.
+
 ## [0.1.25] - 2026-11-26
 
 ### Added

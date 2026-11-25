@@ -202,6 +202,15 @@ export function personalityFileContent(personality, role = "") {
   return ["# Personality", role ? `Role: ${role}` : "", String(personality || "").trim()].filter(Boolean).join("\n\n");
 }
 
+/** The text a person wrote, back out of personalityFileContent's file: the
+ * heading and the Role line it adds are dropped (the phone edits only this). */
+export function personalityFromFile(content) {
+  const paragraphs = String(content || "").split(/\n{2,}/);
+  if (paragraphs[0]?.trim() === "# Personality") paragraphs.shift();
+  if (/^Role: [^\n]*$/.test(paragraphs[0]?.trim() || "")) paragraphs.shift();
+  return paragraphs.join("\n\n").trim();
+}
+
 function joinWords(items) {
   if (items.length <= 1) return items[0] || "profile";
   return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;

@@ -10,9 +10,10 @@ import { cleanMemoryText } from '../team/store.mjs';
 import { projectsWithFolder } from '../../src/lib/folder-access.js';
 import { initialMemberExecution, normalizeModelRouting } from '../../src/lib/model-routing.js';
 import { patchedMemberCopy, patchedProfileText } from './member-shaping.route.mjs';
+import { birdAvatarSrc, birdById } from '../../src/lib/bird-cast.js';
 
 export const name = 'operator-members';
-const MEMBER = /^\/api\/control-plane\/members\/([a-z0-9][a-z0-9_-]{0,79})(?:\/(directories|workspace))?$/;
+const MEMBER = /^\/api\/control-plane\/members\/([a-z0-9][a-z0-9_-]{0,79})(?:\/(directories|workspace|avatar))?$/;
 const CAPABILITIES = ['shell.read', 'shell.dev', 'shell.package', 'shell.git_write', 'shell.destructive', 'file.read', 'search.text', 'patch.apply', 'workspace.outside', 'browser.local', 'web.fetch', 'github.remote', 'mcp.connectors'];
 const TOOLS = [...new Set(BUILT_IN_TOOL_POLICY_GROUPS.flatMap(group => group.tools.map(([id]) => id)))];
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
@@ -187,6 +188,17 @@ export async function handle(req, res, url, ctx) {
         if (!roots.includes(path) && !projects.some(item => resolve(item.path) === displayPath)) throw fail('That folder is not granted to this member.');
         next = { ...access.agent, projects: projects.filter((item, index) => roots[index] !== path && resolve(item.path) !== displayPath) };
       }
+    } else if (action === 'avatar' && req.method === 'PUT') {
+      // The person picks a cast bird for a member (the phone, ADR-0281). The
+      // avatar sits outside the revisioned profile fields, so it takes the
+      // avatar-only path members use for their own (ADR-0243), as the person.
+      keys(body, ['bird', 'expectedRevision']);
+      const chosen = birdById(body.bird);
+      if (!chosen) throw fail('Choose one of Squad\'s birds for this avatar.');
+      if (!Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 0) throw fail('expectedRevision is required. Read the profile before editing.');
+      await ctx.agentChannelActions.setAccess(memberId, { agent: access.agent, profilePatch: { avatar: birdAvatarSrc(chosen.id) }, avatarActor: 'person', expectedProfileRevision: body.expectedRevision });
+      const saved = await accessFor(ctx, memberId);
+      ctx.json(res, 200, { success: true, data: { ...publicProfile(ctx, memberId, saved.agent), avatar: saved.agent.avatar || '' } }); return true;
     } else if (!action && req.method === 'PATCH') {
       keys(body, ['expectedRevision', 'name', 'role', 'description', 'responsibilities', 'instructions', 'personality', 'skills', 'memories', 'abilities', 'voice']);
       const { expectedRevision: _revision, abilities, skills, memories: memory, voice, ...fields } = body;
