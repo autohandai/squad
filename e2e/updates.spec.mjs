@@ -121,7 +121,9 @@ test("new release is discovered, preferences persist, and install waits for cons
   await page.goto(bridge.origin + "/settings/updates");
   await update.getByRole("button", { name: "Install and restart", exact: true }).click();
   expect(installs).toBe(1);
-  await expect(update.getByRole("status")).toHaveText("Installer opened");
+  // While the installer is open the heading still names the version (ADR-0279).
+  await expect(update.getByRole("status")).toHaveText(`Version ${availableVersion} is available`);
+  await expect(update).toContainText("Installer opened with consent.");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
 });
