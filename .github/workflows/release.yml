@@ -609,6 +609,15 @@ jobs:
           if [[ -n "${TAURI_CONFIG_OVERRIDE:-}" ]]; then
             args+=(--config "$TAURI_CONFIG_OVERRIDE")
           fi
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            # The AppImage step runs linuxdeploy, whose output the bundler hides
+            # and whose strip pass fails on binaries built by newer toolchains
+            # (the bundled Node runtime); 0.1.26's first run died there with
+            # only "failed to run linuxdeploy". Don't strip, don't need FUSE,
+            # and print linuxdeploy's own reason if it fails again.
+            export NO_STRIP=true APPIMAGE_EXTRACT_AND_RUN=1
+            args+=(--verbose)
+          fi
           bunx tauri "${args[@]}"
 
       - name: Package desktop release assets
