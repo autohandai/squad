@@ -10,6 +10,8 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.26] - 2026-11-27
+
 ### Added
 
 - **See and delete the files a member made.** A member's Library now also lists "Made in its folders": the images, documents and code it created or changed in its work folders, recorded after each reply on any engine. Move a file it created to the Trash, or delete a file it published to its Library. Files it only edited stay yours to decide.
@@ -829,7 +831,8 @@ Local review candidate; GitHub publication is pending user confirmation.
 - Installable desktop release pipeline with signed and notarised builds when
   credentials are present.
 
-[Unreleased]: https://github.com/autohandai/squad/compare/v0.1.25...HEAD
+[Unreleased]: https://github.com/autohandai/squad/compare/v0.1.26...HEAD
+[0.1.26]: https://github.com/autohandai/squad/compare/v0.1.25...v0.1.26
 [0.1.25]: https://github.com/autohandai/squad/compare/v0.1.24...v0.1.25
 [0.1.24]: https://github.com/autohandai/squad/compare/v0.1.23...v0.1.24
 [0.1.23]: https://github.com/autohandai/squad/compare/v0.1.21...v0.1.23
