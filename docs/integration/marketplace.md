@@ -85,6 +85,7 @@ each team from those agents exactly as they are listed.
 | `createdAt`, `updatedAt` | ISO times; "Added 17 Nov 2026" on every surface |
 | `status` | `published`, `unpublished` (by its publisher), `hidden` (moderation), `removed` (admin delete; content purged) |
 | `featured` | set by admins; the featured row is ordered by `featuredRank` (admin only) |
+| `connectors` | present only when an admin chose them for an Autohand listing: up to four of `github`, `linear`, `drive`, `figma`, `gmail`, `hubspot`, `calendar`, `slack`, `cloudflare`; otherwise the website infers them from the listing's words (ADR-0285) |
 | `kind` | `agent` or `team`; fixed at first publish |
 | `members` | 1 for an agent, the member count for a team |
 | `faces` | teams only: member birds, lead first, at most 8 |
@@ -138,13 +139,17 @@ token; browsers never do.
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/v1/marketplace/admin/agents?status=&q=&cursor=` | every status, with open report counts |
-| PATCH | `/v1/marketplace/admin/agents/:id` | `{status:"published"\|"hidden", featured, reason}` |
+| GET | `/v1/marketplace/admin/agents/:id` | one listing for its edit form: `{agent, editable, listing:{tagline,description,category,tags}, connectors, fields?, team?}`; `editable` only for Autohand's own listings (ADR-0285) |
+| POST | `/v1/marketplace/admin/agents` | a new Autohand agent `{fields:{name,role,bird,instructions,brainCard,skills:[{name,description,text}],notes}, listing, connectors, status:"unpublished"\|"published", note}`; built and checked as a publish is; unpublished unless asked; audited as `listing.drafted` or `listing.published` |
+| PUT | `/v1/marketplace/admin/agents/:id` | `{baseVersion, fields?, listing, connectors, note}` adds a version to an Autohand listing; a team takes listing fields only; `version_conflict` when stale; anyone else's listing is `listing_not_autohand` |
+| PATCH | `/v1/marketplace/admin/agents/:id` | `{status:"published"\|"hidden"\|"unpublished", featured, reason}`; `unpublished`, and publishing an unpublished listing, only for Autohand's own |
+| GET | `/v1/marketplace/admin/searches?days=1..365` | `{top, empty, totals:{searches,empty,terms}}`: first-page searches by normalised words per day, and how many found nothing |
 | DELETE | `/v1/marketplace/admin/agents/:id` | `{reason}`; status `removed`, version documents purged |
 | GET | `/v1/marketplace/admin/reports?status=open` | |
 | PATCH | `/v1/marketplace/admin/reports/:id` | `{status:"resolved"\|"dismissed", note}` |
 | GET | `/v1/marketplace/admin/audit?cursor=` | content-free events, newest first |
 | PUT | `/v1/marketplace/admin/featured` | `{ids:[…]}` puts these featured listings first in this order; audited as `featured.reordered` |
-| GET | `/v1/marketplace/admin/stats?days=1..365&listing=` | `{daily:[{day,views,addClicks,downloads,installs}], totals, top, attribution:{clicks,installs}}` |
+| GET | `/v1/marketplace/admin/stats?days=1..365&listing=` | `{daily:[{day,views,addClicks,downloads,installs}], totals, top, attribution:{clicks,installs}, categories:[{category,label,listings,views,addClicks,downloads,installs}]}` |
 
 Admin rows (`/admin/agents`, filters `kind`, `featured=1`) also carry
 `featuredRank`, `adds` and `stats:{views,addClicks,downloads,installs,attributedInstalls}`.
@@ -310,6 +315,10 @@ Squad API (`services/squad-api`, Cloudflare account that owns `autohand.ai`):
    `.github/workflows/squad-api.yml` before enabling automatic deploys.
 5. Apply `marketplace-migrations/0002_teams_featured_stats.sql` the same way
    as step 2 if the database was created before ADR-0253.
+5a. Apply `marketplace-migrations/0003_admin_editing_searches.sql` the same
+   way before deploying a Worker with admin editing (ADR-0285): it adds
+   `listings.connectors` and `search_queries`, which that Worker reads and
+   writes on every listing read and search.
 6. Seed the agents, teams and featured order (idempotent; `createdAt` is the time you run it):
    `node scripts/marketplace-seed.mjs --batches .cloudflare/marketplace-seed`, then
    for each file `node_modules/.bin/cf d1 query <id> --batch @<file>`.

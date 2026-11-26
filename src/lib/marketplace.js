@@ -38,6 +38,13 @@ export const CATEGORIES = Object.freeze([
   { id: "personal", label: "Personal" },
 ]);
 export const CATEGORY_IDS = Object.freeze(CATEGORIES.map((category) => category.id));
+/**
+ * Connectors an admin may name on an Autohand listing (ADR-0285), the ids the
+ * website draws official marks for. Without a choice the website infers them
+ * from the listing's words, as before.
+ */
+export const LISTING_CONNECTOR_IDS = Object.freeze(["github", "linear", "drive", "figma", "gmail", "hubspot", "calendar", "slack", "cloudflare"]);
+export const LISTING_CONNECTOR_LIMIT = 4;
 export const CREATOR_KINDS = Object.freeze(["autohand", "user", "team"]);
 export const LISTING_STATUSES = Object.freeze(["published", "unpublished", "hidden", "removed"]);
 // A listing is one agent or a whole team (ADR-0253). Both are team files.
@@ -248,6 +255,27 @@ export function templateFromMember({ member, skills = [], notes = "", tagline = 
     app: "",
   });
   return built.document;
+}
+
+/**
+ * An agent's editable parts (ADR-0285), the shape a seed has: name, role,
+ * tagline, bird, instructions, brain card, skills (SKILL.md texts) and
+ * starter memory. `agentTemplateFromFields` builds the template a seed or an
+ * admin edit becomes; `agentFieldsFromTemplate` reads one back for editing.
+ */
+export function agentTemplateFromFields({ key = "", name = "", role = "", tagline = "", bird = "", instructions = "", brainCard = {}, skills = [], notes = "" } = {}) {
+  const member = { key: key || line(name, TEMPLATE_LIMITS.name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "agent", name, role, description: tagline, instructions, brainCard,
+    look: { avatar: bird ? `/avatars/birds/${bird}.webp` : "", employeeType: "" }, skills: skills.map((skill) => skill.name), harness: { id: "autohand" } };
+  return { member, skills, notes, findings: memberTemplateFindings({ member, skills, notes, tagline }), document: templateFromMember({ member, skills, notes, tagline }) };
+}
+
+export function agentFieldsFromTemplate(document) {
+  const member = document?.members?.[0] || {};
+  return {
+    key: member.key || "", name: member.name || "", role: member.role || "", bird: birdFromTemplateAvatar(member.look?.avatar), instructions: member.instructions || "",
+    brainCard: isObject(member.brainCard) ? member.brainCard : {}, notes: member.notes || "",
+    skills: (document?.skills || []).map((skill) => ({ name: skill.name, description: skill.description || "", text: skill.text || "" })),
+  };
 }
 
 /** What a listing shows that comes from its template. */

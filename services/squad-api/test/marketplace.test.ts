@@ -360,3 +360,80 @@ test("listing events count once per network per day, join a website click to its
   for (let index = 0; index < 121; index += 1) burst.push((await event({ type: "view" }, "198.51.100.99")).status);
   assert.equal(burst.at(-1), 429);
 });
+
+// ADR-0285: admins add and edit Autohand's own listings, choose their
+// connectors, publish and unpublish them, and read search demand.
+const fields = (name = "Wren") => ({ name, role: "Release notes writer", bird: "tui", instructions: "Act as a release notes writer. Read merged changes and write notes for users.",
+  brainCard: { purpose: "Write release notes people read." }, skills: [skill], notes: "" });
+const adminListingInput = { tagline: "Turns a week of merged changes into release notes.", description: "Groups changes by who they affect.", category: "engineering", tags: ["release"] };
+
+test("admins draft an Autohand agent unpublished, publish it, edit it into a new version and unpublish it", async () => {
+  const created = await adminCall("/v1/marketplace/admin/agents", { method: "POST", value: { fields: fields(), listing: adminListingInput, connectors: ["github", "slack"] } });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  const id = created.json.data.agent.id;
+  assert.equal(created.json.data.agent.status, "unpublished", "a new agent is a draft until published");
+  assert.equal(created.json.data.agent.creator.kind, "autohand");
+  assert.equal(created.json.data.editable, true);
+  assert.equal(created.json.data.fields.name, "Wren"); assert.equal(created.json.data.fields.skills[0].name, "release-checklist");
+  assert.deepEqual(created.json.data.connectors, ["github", "slack"]);
+  assert.equal((await call(`/v1/marketplace/agents/${id}`)).status, 404, "a draft is not public");
+  const published = await adminCall(`/v1/marketplace/admin/agents/${id}`, { method: "PATCH", value: { status: "published" } });
+  assert.equal(published.json.data.agent.status, "published");
+  const page = (await call(`/v1/marketplace/agents/${id}`)).json.data.agent;
+  assert.deepEqual(page.connectors, ["github", "slack"], "the public listing carries the chosen connectors");
+  const template = (await call(`/v1/marketplace/agents/${id}/template`, { ip: "198.51.100.150" })).json.data;
+  assert(validateAgentTemplate(template.document).ok, "an admin-built agent is an ordinary template");
+  assert.equal(template.contentHash, await contentHash(template.document));
+
+  const edited = await adminCall(`/v1/marketplace/admin/agents/${id}`, { method: "PUT", value: { baseVersion: 1, fields: { ...created.json.data.fields, name: "Wren Ruru", bird: "ruru" }, listing: { ...adminListingInput, tagline: "Release notes from merged changes, grouped by audience." }, connectors: [], note: "Clearer tagline." } });
+  assert.equal(edited.status, 200, JSON.stringify(edited.json));
+  assert.equal(edited.json.data.agent.version, 2); assert.equal(edited.json.data.agent.name, "Wren Ruru"); assert.equal(edited.json.data.agent.bird, "ruru");
+  assert.equal((await call(`/v1/marketplace/agents/${id}`)).json.data.agent.connectors, undefined, "no connectors chosen: the website infers them");
+  assert.equal((await adminCall(`/v1/marketplace/admin/agents/${id}`, { method: "PUT", value: { baseVersion: 1, fields: created.json.data.fields, listing: adminListingInput } })).json.error?.code, "version_conflict");
+  assert.equal((await adminCall(`/v1/marketplace/admin/agents/${id}`, { method: "PUT", value: { baseVersion: 2, fields: { ...created.json.data.fields, instructions: "Use key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnop to post." }, listing: adminListingInput } })).json.error?.code, "template_secrets");
+  assert.equal((await adminCall(`/v1/marketplace/admin/agents/${id}`, { method: "PUT", value: { baseVersion: 2, fields: created.json.data.fields, listing: adminListingInput, connectors: ["notion"] } })).status, 400, "only connectors the website can draw");
+  const versions = (await call(`/v1/marketplace/agents/${id}`)).json.data.versions.map((item: { version: number }) => item.version);
+  assert.deepEqual(versions, [2, 1]);
+
+  assert.equal((await adminCall(`/v1/marketplace/admin/agents/${id}`, { method: "PATCH", value: { status: "unpublished" } })).json.data.agent.status, "unpublished");
+  assert.equal((await call(`/v1/marketplace/agents/${id}`)).status, 404);
+  assert.equal((await adminCall(`/v1/marketplace/admin/agents/${id}`, { method: "PATCH", value: { status: "published" } })).json.data.agent.status, "published", "admins republish Autohand's own agents");
+  const actions = (await adminCall(`/v1/marketplace/admin/audit?listing=${id}`)).json.data.events.map((event: { action: string }) => event.action);
+  assert.deepEqual(actions, ["listing.published", "listing.unpublished", "listing.updated", "listing.published", "listing.drafted"]);
+  assert.equal((await call("/v1/marketplace/admin/agents", { method: "POST", value: { fields: fields(), listing: adminListingInput } })).status, 401);
+});
+
+test("admins edit a seed team's listing but not its members, and never someone else's listing", async () => {
+  const team = (await call("/v1/marketplace/agents?kind=team&limit=1")).json.data.agents[0];
+  const read = (await adminCall(`/v1/marketplace/admin/agents/${team.id}`)).json.data;
+  assert.equal(read.editable, true); assert(read.team.members.length >= 2); assert.equal(read.fields, undefined);
+  const saved = await adminCall(`/v1/marketplace/admin/agents/${team.id}`, { method: "PUT", value: { baseVersion: read.agent.version, listing: { ...read.listing, tagline: "A whole team, reworded by an admin." }, connectors: ["linear"] } });
+  assert.equal(saved.status, 200, JSON.stringify(saved.json));
+  assert.equal(saved.json.data.agent.tagline, "A whole team, reworded by an admin."); assert.equal(saved.json.data.team.members.length, read.team.members.length);
+  assert.equal((await adminCall(`/v1/marketplace/admin/agents/${team.id}`, { method: "PUT", value: { baseVersion: saved.json.data.agent.version, fields: fields(), listing: read.listing } })).json.error?.code, "team_fields");
+  const theirs = (await call("/v1/marketplace/agents", { method: "POST", session: alice, key: "admin-edit-theirs", value: { owner: { kind: "user" }, document: document("Moana"), listing } })).json.data.agent;
+  const refused = await adminCall(`/v1/marketplace/admin/agents/${theirs.id}`, { method: "PUT", value: { baseVersion: 1, fields: fields("Moana"), listing } });
+  assert.equal(refused.json.error?.code, "listing_not_autohand");
+  assert.equal((await adminCall(`/v1/marketplace/admin/agents/${theirs.id}`)).json.data.editable, false);
+  assert.equal((await adminCall(`/v1/marketplace/admin/agents/${theirs.id}`, { method: "PATCH", value: { status: "unpublished" } })).json.error?.code, "listing_not_autohand", "a publisher's agent is hidden, not unpublished, by admins");
+});
+
+test("first-page searches are counted by their words per day, with the ones that found nothing", async () => {
+  await call("/v1/marketplace/agents?q=Payroll%20%20Reconciliation&kind=all");
+  await call("/v1/marketplace/agents?q=payroll%20reconciliation");
+  await call("/v1/marketplace/agents?q=zebra%20wrangler");
+  await call("/v1/marketplace/agents?q=x");
+  const first = (await call("/v1/marketplace/agents?q=engineering&limit=1")).json.data;
+  await call(`/v1/marketplace/agents?q=engineering&limit=1&cursor=${first.nextCursor}`);
+  const searches = (await adminCall("/v1/marketplace/admin/searches?days=7")).json.data;
+  const term = (name: string) => searches.top.find((item: { term: string }) => item.term === name);
+  assert.equal(term("payroll reconciliation").searches, 2);
+  assert.equal(term("engineering").searches, 1, "a next page is not another search");
+  assert.equal(term("x"), undefined, "one letter is not recorded");
+  assert.deepEqual(searches.empty.find((item: { term: string }) => item.term === "zebra wrangler"), { term: "zebra wrangler", searches: 1, empty: 1 });
+  const market = await runtime.getD1Database("MARKETPLACE", "squad-api");
+  assert.deepEqual(Object.keys((await market.prepare("SELECT * FROM search_queries LIMIT 1").first()) || {}).sort(), ["day", "empty", "searches", "term"], "only the words, the day and the counts");
+  const stats = (await adminCall("/v1/marketplace/admin/stats?days=7")).json.data;
+  const engineering = stats.categories.find((item: { category: string }) => item.category === "engineering");
+  assert(engineering.listings > 0 && engineering.label === "Engineering");
+});

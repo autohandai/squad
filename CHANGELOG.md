@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Added
 
+- **Marketplace admin can add and edit Autohand's agents.** Admin › Squad › Marketplace on autohand.ai now adds new agents (saved unpublished until you publish), edits an Autohand agent's name, face, instructions, skills, tagline, category, tags and the connectors its page shows, and publishes or unpublishes it. Draft with AI fills the form from a short brief, Suggestions proposes agents people searched for and did not find, and Stats shows the most popular agents, categories and searches.
 - **Members run on your other computers, over SSH.** Settings › Computers now starts with where your members run: this computer, computers Over SSH, Cloud computers and the other computers in your account. Add a Mac or Linux computer that runs Squad by user and host, with a key from your ~/.ssh or your ssh agent; Test says in one sentence whether Squad answers there. Squad keeps an encrypted SSH connection to it, so nothing is opened to the internet, and each member's Runs on offers it in one click.
 - **Cloud computers (Beta):** New cloud computer lists Hetzner Cloud, DigitalOcean, Amazon Lightsail, Fly.io and your own server, with the steps to set one up in your own account and add it over SSH. Squad doesn't create them for you yet.
 - **Other computers in your account** lists the computers you've connected through the relay, by name and when each last connected.

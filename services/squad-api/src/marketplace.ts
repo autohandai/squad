@@ -11,8 +11,8 @@ import { authenticate, type Principal } from "./auth.js";
 import { ApiError, body, digest, equalSecret, ok, requireValue } from "./http.js";
 import { accessOwner, availableOwners } from "./owners.js";
 import {
-  ATTRIBUTION_ID, AUTOHAND_CREATOR_NAME, CATEGORIES, CATEGORY_IDS, LISTING_ID, REPORT_REASON_IDS, TEAM_TEMPLATE_LIMITS, TEMPLATE_LIMITS,
-  categoryLabel, contentHash, listingSummary, randomListingId, validateListingInput, validateListingTemplate,
+  ATTRIBUTION_ID, AUTOHAND_CREATOR_NAME, CATEGORIES, CATEGORY_IDS, LISTING_CONNECTOR_IDS, LISTING_CONNECTOR_LIMIT, LISTING_ID, REPORT_REASON_IDS, TEAM_TEMPLATE_LIMITS, TEMPLATE_LIMITS,
+  agentFieldsFromTemplate, agentTemplateFromFields, categoryLabel, contentHash, listingSummary, randomListingId, validateAgentTemplate, validateListingInput, validateListingTemplate,
   type TeamDocument,
 } from "../../../src/lib/marketplace.js";
 
@@ -21,13 +21,13 @@ interface ListingRow {
   id: string; publisher_id: string; kind: string; members: number; faces: string; name: string; role: string; tagline: string; description: string; category: string; tags: string; bird: string;
   creator_kind: string; creator_name: string; version: number; content_hash: string; bytes: number; skills: number; has_memory: number;
   status: string; featured: number; featured_rank: number; adds: number; views: number; add_clicks: number; installs: number;
-  created_at: string; updated_at: string; moderated_at: string | null; moderation_reason: string;
+  created_at: string; updated_at: string; moderated_at: string | null; moderation_reason: string; connectors: string;
 }
 type ListingKind = "agent" | "team";
 interface PublisherRow { id: string; kind: string; issuer: string; subject: string; display_name: string }
 
 const PUBLIC_CACHE = "public, max-age=60, s-maxage=300, stale-while-revalidate=600";
-const LISTING_COLUMNS = "id,publisher_id,kind,members,faces,name,role,tagline,description,category,tags,bird,creator_kind,creator_name,version,content_hash,bytes,skills,has_memory,status,featured,featured_rank,adds,views,add_clicks,installs,created_at,updated_at,moderated_at,moderation_reason";
+const LISTING_COLUMNS = "id,publisher_id,kind,members,faces,name,role,tagline,description,category,tags,bird,creator_kind,creator_name,version,content_hash,bytes,skills,has_memory,status,featured,featured_rank,adds,views,add_clicks,installs,created_at,updated_at,moderated_at,moderation_reason,connectors";
 const MAX_REQUEST = TEAM_TEMPLATE_LIMITS.bytes * 2 + 32 * 1024;
 const REPORT_HIDE_THRESHOLD = 5;
 const FEATURED_LIMIT = 12;
@@ -49,9 +49,11 @@ export function publicListing(row: ListingRow) {
   try { tags = JSON.parse(row.tags); } catch { tags = []; }
   let faces: string[] = [];
   try { faces = row.kind === "team" ? JSON.parse(row.faces || "[]") : []; } catch { faces = []; }
+  let connectors: string[] = [];
+  try { connectors = JSON.parse(row.connectors || "[]"); } catch { connectors = []; }
   return {
     id: row.id, kind: row.kind === "team" ? "team" : "agent", members: row.members || 1, name: row.name, role: row.role, tagline: row.tagline, description: row.description,
-    category: row.category, categoryLabel: categoryLabel(row.category), tags, bird: row.bird, ...(row.kind === "team" ? { faces } : {}),
+    category: row.category, categoryLabel: categoryLabel(row.category), tags, bird: row.bird, ...(row.kind === "team" ? { faces } : {}), ...(connectors.length ? { connectors } : {}),
     creator: { kind: row.creator_kind, name: row.creator_name },
     version: row.version, contentHash: row.content_hash, bytes: row.bytes, skills: row.skills, hasMemory: row.has_memory === 1,
     featured: row.featured === 1, installsLabel: installsLabel(row.installs || 0), createdAt: row.created_at, updatedAt: row.updated_at,
@@ -148,6 +150,7 @@ async function listPublic(request: Request, env: Env, url: URL): Promise<Respons
   for (const term of searchTerms(query.q || null)) { where.push("search_text LIKE ? ESCAPE '\\'"); params.push(like(term)); }
   const total = (await env.MARKETPLACE.prepare(`SELECT count(*) AS n FROM listings WHERE ${where.join(" AND ")}`).bind(...params).first<{ n: number }>())?.n || 0;
   const cursor = decodeCursor(query.cursor || null, listCursor);
+  if (!cursor) await recordSearch(env.MARKETPLACE, query.q || "", total);
   const page = [...where]; const pageParams = [...params];
   if (cursor) {
     page.push("(featured<? OR (featured=? AND (created_at<? OR (created_at=? AND id<?))))");
@@ -157,6 +160,22 @@ async function listPublic(request: Request, env: Env, url: URL): Promise<Respons
     .bind(...pageParams, query.limit + 1).all<ListingRow>()).results;
   const more = rows.length > query.limit; const shown = rows.slice(0, query.limit); const last = shown.at(-1);
   return cached({ agents: shown.map(publicListing), total, nextCursor: more && last ? encodeCursor({ f: last.featured, c: last.created_at, i: last.id }) : null });
+}
+
+/**
+ * A search's first page, counted by its normalised words per day, and whether
+ * it found nothing (ADR-0285): what admins read as demand the marketplace
+ * does not meet. Only the words and the day are kept. Repeats a cache answers
+ * never reach here, so the counts are a floor.
+ */
+export function searchTerm(q: string): string {
+  return searchTerms(q).join(" ").slice(0, 80);
+}
+async function recordSearch(db: DB, q: string, total: number): Promise<void> {
+  const term = searchTerm(q);
+  if (term.length < 2) return;
+  await db.prepare(`INSERT INTO search_queries(day,term,searches,empty) VALUES (?,?,1,?)
+    ON CONFLICT(day,term) DO UPDATE SET searches=searches+1, empty=empty+excluded.empty`).bind(dayOf(), term, total ? 0 : 1).run();
 }
 
 async function categoryCounts(env: Env) {
@@ -509,15 +528,20 @@ async function adminList(env: Env, url: URL): Promise<Response> {
 }
 
 async function adminPatch(request: Request, env: Env, actor: string, id: string): Promise<Response> {
-  const input = await body(request, z.object({ status: z.enum(["published", "hidden"]).optional(), featured: z.boolean().optional(), reason: z.string().trim().max(500).default("") }).strict(), 8 * 1024);
+  const input = await body(request, z.object({ status: z.enum(["published", "hidden", "unpublished"]).optional(), featured: z.boolean().optional(), reason: z.string().trim().max(500).default("") }).strict(), 8 * 1024);
   const row = await listingRow(env.MARKETPLACE, id);
   requireValue(row && row.status !== "removed", 404, "listing_not_found", "This agent is not in the marketplace.");
   requireValue(input.status !== "hidden" || input.reason, 400, "reason_required", "Say why this agent is hidden. Its publisher sees the reason.");
-  requireValue(!input.status || row.status !== "unpublished", 409, "listing_unpublished", "Its publisher unpublished this agent; only they can publish it again.");
+  // Autohand's own listings are the admins' to publish and unpublish
+  // (ADR-0285); anyone else's unpublish stays the publisher's decision.
+  const own = row.publisher_id === AUTOHAND_PUBLISHER.id;
+  requireValue(input.status !== "unpublished" || own, 403, "listing_not_autohand", "Only Autohand's own agents are unpublished here. Hide anyone else's.");
+  requireValue(!input.status || row.status !== "unpublished" || own, 409, "listing_unpublished", "Its publisher unpublished this agent; only they can publish it again.");
   const now = new Date().toISOString(); const statements = [];
   if (input.status && input.status !== row.status) {
-    statements.push(env.MARKETPLACE.prepare("UPDATE listings SET status=?,moderated_at=?,moderation_reason=?,updated_at=? WHERE id=?").bind(input.status, now, input.status === "hidden" ? input.reason : "", now, id));
-    statements.push(audit(env.MARKETPLACE, "admin", actor, input.status === "hidden" ? "listing.hidden" : "listing.restored", id, input.reason));
+    const action = input.status === "hidden" ? "listing.hidden" : input.status === "unpublished" ? "listing.unpublished" : row.status === "unpublished" ? "listing.published" : "listing.restored";
+    statements.push(env.MARKETPLACE.prepare("UPDATE listings SET status=?,moderated_at=?,moderation_reason=?,updated_at=? WHERE id=?").bind(input.status, input.status === "hidden" ? now : row.moderated_at, input.status === "hidden" ? input.reason : "", now, id));
+    statements.push(audit(env.MARKETPLACE, "admin", actor, action, id, input.reason));
   }
   if (input.featured !== undefined && Number(input.featured) !== row.featured) {
     // A newly featured listing goes to the end of the featured order.
@@ -528,6 +552,130 @@ async function adminPatch(request: Request, env: Env, actor: string, id: string)
   }
   if (statements.length) await env.MARKETPLACE.batch(statements);
   return ok({ agent: adminListing((await listingRow(env.MARKETPLACE, id))!) });
+}
+
+// --- admin editing (ADR-0285) ----------------------------------------------------
+
+/** The publisher seeds and admin edits share; the same row the seed script writes. */
+const AUTOHAND_PUBLISHER = { id: "autohand-squad-team", kind: "autohand", issuer: "https://autohand.ai", subject: "autohand-squad-team", display_name: AUTOHAND_CREATOR_NAME } as const;
+
+const adminSkill = z.object({ name: z.string().trim().min(1).max(80), description: z.string().trim().max(280).default(""), text: z.string().min(1).max(40_000) }).strict();
+const adminFields = z.object({
+  key: z.string().max(80).optional(),
+  name: z.string().trim().min(1).max(TEMPLATE_LIMITS.name), role: z.string().trim().min(1).max(120),
+  bird: z.string().regex(/^[a-z]{2,24}$/), instructions: z.string().trim().min(1).max(20_000),
+  brainCard: z.record(z.string(), z.string().max(2000)).default({}), skills: z.array(adminSkill).max(TEMPLATE_LIMITS.skills).default([]),
+  notes: z.string().max(TEMPLATE_LIMITS.notes).default(""),
+}).strict();
+const adminConnectors = z.array(z.enum(LISTING_CONNECTOR_IDS as unknown as [string, ...string[]])).max(LISTING_CONNECTOR_LIMIT).default([]);
+const adminCreateInput = z.object({ fields: adminFields, listing: z.unknown(), connectors: adminConnectors, status: z.enum(["published", "unpublished"]).default("unpublished"), note: z.string().trim().max(TEMPLATE_LIMITS.note).default("") }).strict();
+const adminEditInput = z.object({ baseVersion: z.number().int().positive(), fields: adminFields.optional(), listing: z.unknown(), connectors: adminConnectors, note: z.string().trim().max(TEMPLATE_LIMITS.note).default("") }).strict();
+
+/** An agent built from an admin's fields, checked exactly as a publish is. */
+async function adminAgentContent(fields: z.infer<typeof adminFields>, listing: unknown) {
+  const listingFields = validateListingInput(listing);
+  if (!listingFields.ok) throw new ApiError(400, "listing_invalid", listingFields.error);
+  const built = agentTemplateFromFields({ ...fields, tagline: listingFields.listing.tagline });
+  if (built.findings.length) throw new ApiError(400, "template_secrets", `Something that looks like a ${built.findings[0].kinds.join(" or ")} is in ${built.findings[0].path}. Remove it before publishing.`, built.findings);
+  return checkedContent("agent", listingFields.listing, built.document);
+}
+
+async function ensureAutohandPublisher(db: DB): Promise<void> {
+  const now = new Date().toISOString();
+  await db.prepare("INSERT OR IGNORE INTO publishers(id,kind,issuer,subject,display_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+    .bind(AUTOHAND_PUBLISHER.id, AUTOHAND_PUBLISHER.kind, AUTOHAND_PUBLISHER.issuer, AUTOHAND_PUBLISHER.subject, AUTOHAND_PUBLISHER.display_name, now, now).run();
+}
+
+/** One listing with everything its edit form shows, any status but removed. */
+async function adminGet(env: Env, id: string): Promise<Response> {
+  const row = await listingRow(env.MARKETPLACE, id);
+  requireValue(row && row.status !== "removed", 404, "listing_not_found", "This agent is not in the marketplace.");
+  const { document } = await versionDocument(env.MARKETPLACE, id, row.version);
+  const summary = listingSummary(row.kind, document);
+  const editable = row.publisher_id === AUTOHAND_PUBLISHER.id;
+  return ok({
+    agent: adminListing(row), editable,
+    listing: { tagline: row.tagline, description: row.description, category: row.category, tags: publicListing(row).tags },
+    connectors: publicListing(row).connectors || [],
+    ...(row.kind === "agent" ? { fields: agentFieldsFromTemplate(document) } : { team: { members: summary.members, channels: summary.channels, lead: document.team?.lead || "" } }),
+  });
+}
+
+/** A new Autohand agent: unpublished unless the admin says publish. */
+async function adminCreate(request: Request, env: Env, actor: string): Promise<Response> {
+  const input = await body(request, adminCreateInput, MAX_REQUEST, 60_000);
+  const content = await adminAgentContent(input.fields, input.listing);
+  await ensureAutohandPublisher(env.MARKETPLACE);
+  const now = new Date().toISOString(); const name = content.summary.name; const role = content.summary.role;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const id = randomListingId();
+    try {
+      await env.MARKETPLACE.batch([
+        env.MARKETPLACE.prepare(`INSERT INTO listings(id,publisher_id,kind,members,faces,name,role,tagline,description,category,tags,bird,creator_kind,creator_name,search_text,version,content_hash,bytes,skills,has_memory,status,featured,adds,created_by,created_at,updated_at,connectors)
+          VALUES (?,?,'agent',1,'[]',?,?,?,?,?,?,?,'autohand',?,?,1,?,?,?,?,?,0,0,?,?,?,?)`)
+          .bind(id, AUTOHAND_PUBLISHER.id, name, role, content.fields.tagline, content.fields.description, content.fields.category, JSON.stringify(content.fields.tags), content.summary.bird, AUTOHAND_CREATOR_NAME,
+            searchText({ name, role, tagline: content.fields.tagline, creatorName: AUTOHAND_CREATOR_NAME, tags: content.fields.tags, category: content.fields.category }),
+            content.hash, content.bytes, content.summary.skills.length, content.summary.hasMemory ? 1 : 0, input.status, `admin:${actor}`, now, now, JSON.stringify(input.connectors)),
+        env.MARKETPLACE.prepare("INSERT INTO listing_versions(listing_id,version,document,content_hash,bytes,note,created_by,created_at) VALUES (?,1,?,?,?,?,?,?)").bind(id, JSON.stringify(content.document), content.hash, content.bytes, input.note || "Added by the Autohand Squad team.", `admin:${actor}`, now),
+        audit(env.MARKETPLACE, "admin", actor, input.status === "published" ? "listing.published" : "listing.drafted", id, `v1 ${content.hash.slice(0, 12)}`),
+      ]);
+      return adminGet(env, id).then(response => new Response(response.body, { status: 201, headers: response.headers }));
+    } catch (error) {
+      if (!String(error).includes("UNIQUE")) throw error;
+    }
+  }
+  throw new ApiError(503, "publish_unavailable", "The agent could not be added. Try again.");
+}
+
+/**
+ * A new version of an Autohand listing. An agent's fields rebuild its
+ * template; a team keeps its members (they are its agents, edited on their
+ * own pages) and changes only what the listing says. Status stays as it was.
+ */
+async function adminEdit(request: Request, env: Env, actor: string, id: string): Promise<Response> {
+  const input = await body(request, adminEditInput, MAX_REQUEST, 60_000);
+  const row = await listingRow(env.MARKETPLACE, id);
+  requireValue(row && row.status !== "removed", 404, "listing_not_found", "This agent is not in the marketplace.");
+  requireValue(row.publisher_id === AUTOHAND_PUBLISHER.id, 403, "listing_not_autohand", "Only Autohand's own agents are edited here. Its publisher edits this one; you can hide it.");
+  requireValue(row.version === input.baseVersion, 409, "version_conflict", "This agent changed since you opened it. Reload it before saving.");
+  let content;
+  if (row.kind === "agent") {
+    requireValue(input.fields, 400, "fields_required", "Send the agent's fields.");
+    content = await adminAgentContent(input.fields, input.listing);
+  } else {
+    requireValue(!input.fields, 400, "team_fields", "A team's members are its agents; edit them on their own listings.");
+    const { document } = await versionDocument(env.MARKETPLACE, id, row.version);
+    content = await checkedContent("team", input.listing, document);
+  }
+  const next = row.version + 1; const now = new Date().toISOString(); const name = content.summary.name; const role = content.summary.role;
+  try {
+    await env.MARKETPLACE.batch([
+      env.MARKETPLACE.prepare("INSERT INTO listing_versions(listing_id,version,document,content_hash,bytes,note,created_by,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(id, next, JSON.stringify(content.document), content.hash, content.bytes, input.note, `admin:${actor}`, now),
+      env.MARKETPLACE.prepare(`UPDATE listings SET name=?,role=?,members=?,faces=?,tagline=?,description=?,category=?,tags=?,bird=?,search_text=?,version=?,content_hash=?,bytes=?,skills=?,has_memory=?,connectors=?,updated_at=? WHERE id=? AND version=?`)
+        .bind(name, role, content.members, content.faces, content.fields.tagline, content.fields.description, content.fields.category, JSON.stringify(content.fields.tags), content.summary.bird,
+          searchText({ name, role, tagline: content.fields.tagline, creatorName: row.creator_name, tags: content.fields.tags, category: content.fields.category, members: content.kind === "team" ? content.summary.members : undefined }),
+          next, content.hash, content.bytes, content.summary.skills.length, content.summary.hasMemory ? 1 : 0, JSON.stringify(input.connectors), now, id, input.baseVersion),
+      audit(env.MARKETPLACE, "admin", actor, "listing.updated", id, `v${next} ${content.hash.slice(0, 12)}${input.note ? ` ${input.note}` : ""}`),
+    ]);
+  } catch (error) {
+    if (String(error).includes("UNIQUE") || String(error).includes("PRIMARY")) throw new ApiError(409, "version_conflict", "This agent changed since you opened it. Reload it before saving.");
+    throw error;
+  }
+  return adminGet(env, id);
+}
+
+const searchesQuery = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) });
+/** What people searched for, and what found nothing, over the last days. */
+async function adminSearches(env: Env, url: URL): Promise<Response> {
+  const parsed = searchesQuery.safeParse(Object.fromEntries(url.searchParams));
+  requireValue(parsed.success, 400, "invalid_query", "Use days (1 to 365).");
+  const since = dayOf(Date.now() - (parsed.data.days - 1) * DAY_MS);
+  const [top, empty, totals] = await env.MARKETPLACE.batch([
+    env.MARKETPLACE.prepare("SELECT term,sum(searches) AS searches,sum(empty) AS empty FROM search_queries WHERE day>=? GROUP BY term ORDER BY searches DESC, term LIMIT 50").bind(since),
+    env.MARKETPLACE.prepare("SELECT term,sum(searches) AS searches,sum(empty) AS empty FROM search_queries WHERE day>=? GROUP BY term HAVING sum(empty)>0 ORDER BY sum(empty) DESC, term LIMIT 50").bind(since),
+    env.MARKETPLACE.prepare("SELECT coalesce(sum(searches),0) AS searches,coalesce(sum(empty),0) AS empty,count(DISTINCT term) AS terms FROM search_queries WHERE day>=?").bind(since),
+  ]);
+  return ok({ days: parsed.data.days, since, top: top.results, empty: empty.results, totals: totals.results[0] });
 }
 
 async function adminDelete(request: Request, env: Env, actor: string, id: string): Promise<Response> {
@@ -575,14 +723,18 @@ async function adminStats(env: Env, url: URL): Promise<Response> {
   const since = dayOf(Date.now() - (days - 1) * DAY_MS);
   const scope = listing ? " AND listing_id=?" : "";
   const bind = listing ? [since, listing] : [since];
-  const [daily, totals, top, attributed] = await env.MARKETPLACE.batch([
+  const [daily, totals, top, attributed, categories] = await env.MARKETPLACE.batch([
     env.MARKETPLACE.prepare(`SELECT day,sum(views) AS views,sum(add_clicks) AS addClicks,sum(downloads) AS downloads,sum(installs) AS installs FROM listing_stats WHERE day>=?${scope} GROUP BY day ORDER BY day`).bind(...bind),
     env.MARKETPLACE.prepare(`SELECT coalesce(sum(views),0) AS views,coalesce(sum(add_clicks),0) AS addClicks,coalesce(sum(downloads),0) AS downloads,coalesce(sum(installs),0) AS installs FROM listing_stats WHERE day>=?${scope}`).bind(...bind),
     env.MARKETPLACE.prepare(`SELECT s.listing_id AS id,l.name,l.kind,l.category,sum(s.views) AS views,sum(s.add_clicks) AS addClicks,sum(s.downloads) AS downloads,sum(s.installs) AS installs
       FROM listing_stats s JOIN listings l ON l.id=s.listing_id WHERE s.day>=?${listing ? " AND s.listing_id=?" : ""} GROUP BY s.listing_id ORDER BY installs DESC, downloads DESC, views DESC LIMIT 20`).bind(...bind),
     env.MARKETPLACE.prepare(`SELECT count(*) AS clicks,count(installed_at) AS installs FROM attributions WHERE clicked_at>=?${scope}`).bind(`${since}T00:00:00.000Z`, ...(listing ? [listing] : [])),
+    // Per category: published listings now, and their events in the window.
+    env.MARKETPLACE.prepare(`SELECT l.category AS category,count(DISTINCT CASE WHEN l.status='published' THEN l.id END) AS listings,coalesce(sum(s.views),0) AS views,coalesce(sum(s.add_clicks),0) AS addClicks,coalesce(sum(s.downloads),0) AS downloads,coalesce(sum(s.installs),0) AS installs
+      FROM listings l LEFT JOIN listing_stats s ON s.listing_id=l.id AND s.day>=? WHERE l.status<>'removed'${listing ? " AND l.id=?" : ""} GROUP BY l.category ORDER BY installs DESC, views DESC`).bind(...bind),
   ]);
-  return ok({ days, since, daily: daily.results, totals: totals.results[0], top: top.results, attribution: attributed.results[0] });
+  return ok({ days, since, daily: daily.results, totals: totals.results[0], top: top.results, attribution: attributed.results[0],
+    categories: (categories.results as Array<{ category: string }>).map(item => ({ ...item, label: categoryLabel(item.category) })) });
 }
 
 async function adminReports(env: Env, url: URL): Promise<Response> {
@@ -655,7 +807,11 @@ export async function publicMarketplaceRoutes(request: Request, env: Env, url: U
   if (path.startsWith("/v1/marketplace/admin/")) {
     const actor = await admin(request, env);
     if (path === "/v1/marketplace/admin/agents" && request.method === "GET") return adminList(env, url);
+    if (path === "/v1/marketplace/admin/agents" && request.method === "POST") return adminCreate(request, env, actor);
+    if (path === "/v1/marketplace/admin/searches" && request.method === "GET") return adminSearches(env, url);
     const agent = path.match(ADMIN_AGENT);
+    if (agent && request.method === "GET") return adminGet(env, agent[1]);
+    if (agent && request.method === "PUT") return adminEdit(request, env, actor, agent[1]);
     if (agent && request.method === "PATCH") return adminPatch(request, env, actor, agent[1]);
     if (agent && request.method === "DELETE") return adminDelete(request, env, actor, agent[1]);
     if (path === "/v1/marketplace/admin/reports" && request.method === "GET") return adminReports(env, url);
