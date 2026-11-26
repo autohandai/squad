@@ -20,6 +20,7 @@ list to the section for that version.
 
 ### Changed
 
+- **Calmer, clearer loading.** A member's reply in progress now shows its stage as softly shimmering words instead of a spinner, and channels show "is typing…" the same way. A member's task list marks each step with an empty circle, a turning ring or a green check. Saving memory settings says "Saving…" then "Saved" with a check, the update download shows a thin bar with its percentage, the connectors catalogue slides a thin bar while it loads, and History shows placeholder rows instead of "Loading…". With reduced motion on, nothing sweeps or slides.
 - The phone's "From anywhere" is now **Reach from anywhere, through Squad relay by Autohand**, with the relay's address and how it's doing ("Connected · 38 ms", or when it last answered). **Use a different relay** points phones at a relay you or your team run; it must be an HTTPS address. The channel-sharing relay page is now called **Team relay**.
 
 ### Fixed

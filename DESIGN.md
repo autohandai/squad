@@ -268,7 +268,7 @@
 - The header is one row: avatar and name share one keyboard-accessible trigger for a compact anchored profile popover (name, role, live status, purpose, workspace, model, harness, and View profile), role, and a meta line with a live status dot (Online / Working), workspace, model, and a **Runs with** chip that opens the engine switcher. Actions on the right are **New chat** plus icon buttons for automation, tasks, and runs.
 - The meta line adds `Context 42%` after the model when the bridge knows the tokens of the member's last request and the model's window; at 85% and above the figure turns amber and one quiet amber line above the composer says so. Unknown usage or an unknown window shows nothing, never a guess.
 - Messages sit in a 48rem column. User messages are quiet right-aligned bubbles (muted background, no border) with the time on hover. Member messages are avatar + name + time + a small live indicator while working; the answer is prose at 15px/1.75. No badges, no cards.
-- While working, one line shows the current stage with a small spinner. Work details are a text disclosure with a summary (steps · tools · duration); raw diagnostic output stays behind the chat setting.
+- While working, one line shows the current stage as shimmering words (ADR-0284), with no spinner beside it. Work details are a text disclosure with a summary (steps · tools · duration); raw diagnostic output stays behind the chat setting.
 - Elapsed time uses human units: `1 min 35 sec`, then `1 hour 35 min` for longer work. A terminal reply stops its timer and working indicator immediately. A timeout states whether it stopped for silence or the maximum runtime and offers Retry. If final diagnostics exceed the shared-message limit, keep the received activity and explain that final work details were limited.
 - Opening a member shows the conversation the bridge saw, whichever window or device sent it (ADR-0163): turns the window has never held are merged in time order from the bridge's runs, from the conversation's start onward, and nothing the window already has is replaced or repeated. No "load from bridge" control; it is the conversation.
 - Work details is a semantic activity feed: one divider row per action that updates in place, reads folded into a "read 12 files" row, edits and shell commands in mono, failures in the destructive colour with their detail open, and a text Raw toggle for the unprocessed trace. The Execution panel's run output uses the same feed.
@@ -440,3 +440,15 @@
 - A member's sections start with Home, Communications, Permissions: who it is, how to reach it, what it may do (ADR-0266). One setting lives on one page.
 - An update the person has not installed is still "Version X is available": the installer being open is a description under that title, never the title itself, and a download for an older release gives way to the newer one in Settings, the sidebar and the failed-update screen (ADR-0279).
 - A squad brought back from before account ownership is announced in one quiet line under the window's top, like the update notice (ADR-0283): what came back, that earlier files are untouched, then What was left out, Undo (asks once, inline) and Done. The offer uses the same line with the member names and "Bring back your earlier squad"; it also shows during setup.
+
+## Loading (ADR-0284)
+
+- Six patterns, from `src/components/ui/loading.jsx`, `spinner.jsx` and `skeleton.jsx`; pick by what is known, never by taste:
+  - **Progress bar** (`LoadingProgress`): only with a measured total. Thin track, dark fill, the percentage at the right in tabular digits; it carries the progressbar role and value text.
+  - **Spinner → Saved** (`SaveStatus`): a save. "Saving…" with the thin ring, then "Saved" with a small green check; an error says why in the destructive colour. It sits beside the button, never inside it.
+  - **Text shimmer** (`TextShimmer`): a member composing a reply or typing in a channel ("Thinking…", the current stage). The words stay real text.
+  - **Skeleton** (`Skeleton`): a list's first load, in the final row layout (marketplace rows, Work, History). Settings keep their one quiet line instead.
+  - **Indeterminate bar** (`IndeterminateBar`): an unknown wait inside a card or panel (the connectors catalogue): a thin segment sliding along the top, above the quiet line that says what is loading.
+  - **Progress checklist** (`ProgressChecklist`, and `AgentTaskChecklist` for a member's reported tasks): an empty circle to do, the ring while doing (only while work is live), a green check when done.
+- The ring (`Spinner`) is the only spinner: no `Loader2`/`LoaderCircle` with `animate-spin`. Beside words that already say what is happening it is `aria-hidden`; alone it is announced.
+- Under reduced motion nothing sweeps or slides: shimmer words are drawn plainly, skeletons are flat, the indeterminate bar is a faint full line, the ring turns slowly.

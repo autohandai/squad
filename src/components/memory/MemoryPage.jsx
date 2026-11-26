@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { ArrowUpRight, GitBranch, List, Loader2, Pin, Plus, RefreshCw, Search, Settings2, X } from "lucide-react";
+import { ArrowUpRight, GitBranch, List, Pin, Plus, RefreshCw, Search, Settings2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -9,6 +9,8 @@ import { MemoryGraph } from "./MemoryGraph";
 import { MEMORY_KINDS, memoryColor, scopeLabel } from "@/lib/memory-graph";
 import { cn } from "@/lib/utils";
 import "./memory.css";
+import { Spinner } from "@/components/ui/spinner";
+import { SaveStatus } from "@/components/ui/loading";
 
 const EMPTY = { records: [], members: [], groups: [], links: [], warnings: [], collected: 0, total: 0, index: {} };
 const when = value => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value)) : 'Time not recorded';
@@ -70,7 +72,7 @@ function MemoryInspector({ record, data, api, onChanged, onSelect, onClose, navi
       <div className="grid grid-cols-2 gap-3"><label className="grid gap-1.5 text-xs text-muted-foreground">Kind<MemoryChoice label="Memory kind" value={draft.kind} onChange={kind => change('kind', kind)} className="w-full min-w-0 border-input">{MEMORY_KINDS.map(kind => <SelectItem key={kind} value={kind} className="capitalize">{kind}</SelectItem>)}</MemoryChoice></label>
       <label className="grid gap-1.5 text-xs text-muted-foreground">Group<MemoryChoice label="Memory group" value={draft.groupId} onChange={groupId => change('groupId', groupId)} className="w-full min-w-0 border-input"><SelectItem value="__all">Ungrouped</SelectItem>{data.groups.map(group => <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>)}</MemoryChoice></label></div>
       <label className="grid gap-1.5 text-xs text-muted-foreground">Tags, separated by commas<Input aria-label="Memory tags" className="h-8 text-sm text-foreground" value={draft.tags} onChange={event => change('tags', event.target.value)} /></label>
-      <div className="flex items-center gap-3"><Button size="sm" variant="outline" disabled={!changed || pending} onClick={save}>{pending ? 'Saving…' : 'Save changes'}</Button>{saved ? <span role="status" className="text-xs text-muted-foreground">Saved</span> : null}</div>
+      <div className="flex items-center gap-3"><Button size="sm" variant="outline" disabled={!changed || pending} onClick={save}>Save changes</Button><SaveStatus state={pending ? 'saving' : saved ? 'saved' : 'idle'} /></div>
     </section>
     <section className="mt-6 border-t pt-5" aria-label="Memory relationships">
       <h3 className="text-xs font-medium">Connections <span className="font-normal text-muted-foreground">{links.length}</span></h3>
@@ -156,7 +158,7 @@ export function MemoryPage({ api, navigate, onSettings }) {
         {data.records.length ? view === 'graph' ? <MemoryGraph records={data.records} members={data.members} groups={data.groups} grouping={grouping} colors={data.settings?.colors || {}} links={data.links} selectedId={selectedId} onSelect={setSelectedId} /> : <div className="min-h-0 flex-1 overflow-y-auto px-5 sm:px-8" role="tabpanel" aria-label="Memory list">
           {data.records.map(record => <button key={record.id} data-memory-row={record.id} className={cn('flex w-full gap-3 border-b py-4 text-left', record.id === selectedId && 'border-l-2 border-l-foreground pl-3')} onClick={() => setSelectedId(record.id)}><span className="mt-1.5 size-2 shrink-0 rounded-full" style={{ backgroundColor: memoryColor(record.ownerId, data.settings?.colors?.[record.ownerId] || members.get(record.ownerId)?.color) }} /><span className="min-w-0 flex-1"><span className="block text-sm font-medium">{record.title}{record.pinned ? <Pin className="ml-2 inline size-3 text-muted-foreground" /> : null}</span><span className="mt-1 line-clamp-2 block text-xs leading-relaxed text-muted-foreground">{record.text}</span><span className="mt-2 block text-[11px] text-muted-foreground">{members.get(record.ownerId)?.name || record.authorName || 'Whole team'} · {scopeLabel(record)} · {record.kind} · {record.sourceLabel}</span></span><span className="shrink-0 text-[11px] text-muted-foreground">{when(record.updatedAt || record.createdAt)}</span></button>)}
         </div> : <div className="flex flex-1 flex-col items-center justify-center px-8 py-16 text-center"><GitBranch className="mb-5 size-7 text-muted-foreground/50" /><h2 className="text-sm font-medium">{loading ? 'Collecting memories…' : query || Object.values(filters).some(Boolean) ? 'No memories match this view' : 'Your squad’s knowledge starts here'}</h2><p className="mt-2 max-w-xs text-xs leading-relaxed text-muted-foreground">{query ? `Nothing found for “${query}”. Try fewer words or clear the filters.` : 'Ask a member to remember something, add a memory, or choose a Markdown folder in Settings.'}</p>{query || Object.values(filters).some(Boolean) ? <Button variant="ghost" size="sm" className="mt-3 text-xs" onClick={() => { setQuery(''); setFilters({ owner: '', scope: '', kind: '', group: '' }); }}>Clear filters</Button> : <Button variant="ghost" size="sm" className="mt-3 text-xs" onClick={onSettings}>Choose collection sources</Button>}</div>}
-        {loading && data.records.length ? <span role="status" className="absolute left-5 top-3 flex items-center gap-1.5 bg-background/90 text-[11px] text-muted-foreground"><Loader2 className="size-3 animate-spin" />Updating…</span> : null}
+        {loading && data.records.length ? <span role="status" className="absolute left-5 top-3 flex items-center gap-1.5 bg-background/90 text-[11px] text-muted-foreground"><Spinner className="size-3" aria-hidden="true" />Updating…</span> : null}
       </div>
       {selected ? <MemoryInspector key={selected.id} record={selected} data={data} api={api} onChanged={reload} onSelect={setSelectedId} onClose={() => setSelectedId('')} navigate={navigate} /> : null}
     </div>

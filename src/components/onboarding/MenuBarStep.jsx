@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Check, Loader2, Wifi } from "lucide-react";
+import { Check, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PresenceDot } from "@/components/members/PresenceDot";
 import { saveQuickChatSettings } from "@/components/settings/QuickChatPreferences";
 import { cn } from "@/lib/utils";
 import trayTemplate from "../../../src-tauri/icons/tray-template.png";
+import { SaveStatus } from "@/components/ui/loading";
 
 const MODES = [
   { id: "single", label: "One Squad icon", detail: "One quiet mark. Your members wait inside Quick Chat, one click away." },
@@ -122,7 +123,7 @@ export function MenuBarStep({ api, members, onBack, onContinue, footerNote }) {
       </div>
     </fieldset>
     <div className="min-h-5 text-sm" aria-live="polite">
-      {busy ? <span className="inline-flex items-center gap-2 text-muted-foreground"><Loader2 className="size-3.5 animate-spin" aria-hidden="true" />Saving…</span> : status ? <span className="text-muted-foreground">{status}</span> : settings?.quickChatEnabled === false ? <span className="text-muted-foreground">Quick Chat is off. Choosing a style turns it back on.</span> : null}
+      {busy ? <SaveStatus state="saving" className="text-sm" /> : status ? <span className="text-muted-foreground">{status}</span> : settings?.quickChatEnabled === false ? <span className="text-muted-foreground">Quick Chat is off. Choosing a style turns it back on.</span> : null}
     </div>
     {error ? <div className="mt-2 text-sm"><p role="alert" className="text-destructive">{error}</p>{!settings ? <Button variant="ghost" size="sm" onClick={() => setAttempt(value => value + 1)}>Retry</Button> : null}</div> : null}
     <footer className="mt-8 flex flex-wrap items-center gap-2 border-t border-border/70 pt-6">

@@ -5,6 +5,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { TextShimmer } from "@/components/ui/loading";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { QUICK_REACTIONS, reactionName, searchReactions } from "@/lib/reactions";
@@ -387,16 +388,16 @@ export function ChannelStream({
                     <span className="text-sm font-semibold leading-5">{name}</span>
                     <span className="text-xs text-muted-foreground" title={fullTime(message)}>{timeLabel(message, locale)}</span>
                     {fallback ? <span className="text-xs text-muted-foreground">{fallback}</span> : null}
-                    {loading ? <Spinner className="size-3" /> : null}
+                    {loading ? <Spinner className="size-3" aria-hidden="true" /> : null}
                   </div>
                 ) : null}
                 {compact ? <time className="chat-channel-compact-time hidden text-[10px] text-muted-foreground" title={fullTime(message)} dateTime={ms ? new Date(ms).toISOString() : undefined}>{timeLabel(message, locale)}</time> : null}
                 <div className={cn("text-sm leading-6", failed ? "text-destructive" : "text-foreground/90", compact && loading && "text-muted-foreground")}>
                   <MentionChips message={message} agents={agents} userName={userName} channelMemberIds={channel?.memberIds || []} />
                   {loading && !message.body?.trim() ? (
-                    <span className="text-muted-foreground">
+                    <TextShimmer>
                       {name} {typingLabel}
-                    </span>
+                    </TextShimmer>
                   ) : isNoTextReply(message.body) ? (
                     <span className="text-muted-foreground">{noTextLabel}</span>
                   ) : renderBody ? (

@@ -9,6 +9,7 @@ import { chatMetaLine } from "@/lib/chat-sessions";
 import { harnessLabel } from "@/lib/harness";
 import { relativeTime } from "@/lib/member-history";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const keyOf = item => `${item.kind}:${item.id}`;
 
@@ -78,7 +79,7 @@ export function PreviousChats({ api, memberId, onOpen, onOpenThread, disabled = 
       <div className="min-h-0 flex-1 overflow-y-auto px-5" data-testid="conversation-history">
         {error ? <p role="alert" className="py-3 text-sm text-destructive">{error}</p> : null}
         {notice ? <p role="status" className="py-3 text-sm text-muted-foreground">{notice}</p> : null}
-        {!items.length ? <p className="py-6 text-sm text-muted-foreground">{loading ? "Loading…" : "No previous chats yet. Reply threads also appear here."}</p> : <ul className="divide-y divide-border/70">{items.map(item => <li key={keyOf(item)} className="flex items-start gap-3 py-3" data-history-kind={item.kind}>
+        {!items.length && loading ? <HistorySkeleton /> : !items.length ? <p className="py-6 text-sm text-muted-foreground">No previous chats yet. Reply threads also appear here.</p> : <ul className="divide-y divide-border/70">{items.map(item => <li key={keyOf(item)} className="flex items-start gap-3 py-3" data-history-kind={item.kind}>
           <Checkbox className="mt-1" aria-label={`Select ${item.title || "conversation"}`} checked={selected.has(keyOf(item))} disabled={busy} onCheckedChange={() => toggle(item)} />
           <div className="min-w-0 flex-1">
             <button type="button" className="block w-full text-left text-sm hover:underline disabled:opacity-60" disabled={busy || (disabled && item.kind === "chat")} onClick={() => void act(async () => { if (item.kind === "thread") onOpenThread?.(item); else if (await onOpen?.(item) === false) return; setOpen(false); })}>
@@ -101,4 +102,22 @@ export function PreviousChats({ api, memberId, onOpen, onOpenThread, disabled = 
       {disabled ? <p className="border-t px-5 py-3 text-xs text-muted-foreground">Wait for the current reply to finish or stop it before opening another saved chat. Independent threads remain available.</p> : null}
     </SheetContent>
   </Sheet>;
+}
+
+/** History's first load: rows in the final layout (a checkbox, a title and a
+ * muted line), never a "Loading…" line (ADR-0284). */
+function HistorySkeleton() {
+  return (
+    <ul role="status" aria-label="Loading history" aria-busy="true" className="divide-y divide-border/70" data-testid="history-skeleton">
+      {[0, 1, 2, 3].map(row => (
+        <li key={row} className="flex items-start gap-3 py-3">
+          <Skeleton className="mt-1 size-4 rounded-[4px]" />
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <Skeleton className="h-3.5" style={{ width: `${[62, 48, 70, 40][row]}%` }} />
+            <Skeleton className="h-3" style={{ width: `${[38, 30, 44, 26][row]}%` }} />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
 }

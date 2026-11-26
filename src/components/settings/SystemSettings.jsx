@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { LoaderCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -8,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { formatUsageCount, systemCountRows } from "@/lib/system-settings";
 import { copyText } from "@/lib/copy-text";
 import { getSystemResetClient, pendingSystemReset, performSystemReset, recoverSystemReset, restartAfterSystemReset } from "@/lib/system-reset";
+import { Spinner } from "@/components/ui/spinner";
 
 function Row({ title, description, children, htmlFor }) {
   return (
@@ -185,7 +185,7 @@ export function SystemSettings({ api, locale = "en", copy = {}, className,onBefo
               {reset.state === "confirm" ? "This replaces the selected Squad with an empty dataset. Its members, channels, chats, memories and files remain in the earlier dataset for recovery. Other accounts and teams, your Autohand Code sign-in and external project folders are kept. Export a portable backup from Settings → Backups before continuing." : reset.state === "complete" || reset.state === "restarting" ? reset.receipt?.phase === "complete" ? "Your earlier dataset and sign-in are kept. Restart Squad to open the empty dataset." : reset.receipt?.error || "Your earlier data is kept. Reopen Squad to check the result." : "Finishing work and preparing the selected Squad’s new dataset…"}
             </DialogDescription>
           </DialogHeader>
-          {["working", "recovering", "restarting"].includes(reset.state) ? <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" />{reset.state === "restarting" ? "Restarting Squad…" : reset.state === "recovering" ? "Checking reset progress…" : "Resetting Squad…"}</p> : null}
+          {["working", "recovering", "restarting"].includes(reset.state) ? <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner className="size-3.5" aria-hidden="true" />{reset.state === "restarting" ? "Restarting Squad…" : reset.state === "recovering" ? "Checking reset progress…" : "Resetting Squad…"}</p> : null}
           {reset.error ? <p role="alert" className="text-sm text-destructive">{reset.error}</p> : null}
           <DialogFooter>
             {reset.state === "confirm" ? <><Button type="button" variant="ghost" onClick={() => void cancelReset()}>{copy.cancel || "Cancel"}</Button><Button type="button" variant="destructive" onClick={() => void resetSquad()} data-testid="system-reset-confirm">{copy.systemResetConfirm || "Reset Squad"}</Button></> : null}

@@ -1,4 +1,4 @@
-import { Progress } from "@/components/ui/progress";
+import { LoadingProgress } from "@/components/ui/loading";
 import { updateBytes, updatePercent } from "@/lib/update-status";
 // `bar={false}` when a perch above already draws the measure (Settings ›
 // Updates, ADR-0245); the words stay either way.
@@ -12,10 +12,10 @@ export function UpdateProgress({ operation, compact = false, bar = true }) {
   return (
     <div className="flex flex-col gap-2" data-testid="update-progress">
       {bar && percent !== null ? (
-        <Progress
+        <LoadingProgress
           value={percent}
-          aria-label="Update download"
-          aria-valuetext={label}
+          label="Update download"
+          valueText={label}
         />
       ) : null}
       <p

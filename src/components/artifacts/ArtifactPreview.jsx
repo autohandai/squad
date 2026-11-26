@@ -1,11 +1,12 @@
 import { currentOwnership, ownershipUrl } from "@/lib/ownership-client";
 import { ownershipFetch } from "@/lib/ownership-client";
 import { useEffect, useState } from "react";
-import { ArrowUpRight, Download, FileText, LoaderCircle, X } from "lucide-react";
+import { ArrowUpRight, Download, FileText, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { artifactDate, artifactIdFromHref, openArtifact } from "@/lib/artifacts";
 import { isSystemResetPending } from "@/lib/system-reset";
+import { Spinner } from "@/components/ui/spinner";
 
 /** Chat links use the same saved artifact as the member's Library. */
 export function ArtifactCard({ id, title, href }) {
@@ -32,7 +33,7 @@ function ArtifactBody({ artifact, renderMarkdown }) {
     return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [artifact.id, artifact.revision, artifact.kind, artifact.contentUrl]);
   if (error) return <p role="alert" className="p-6 text-sm text-destructive">{error}</p>;
-  if (['html', 'text', 'markdown', 'pdf'].includes(artifact.kind) && !loaded) return <p role="status" className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Loading saved file…</p>;
+  if (['html', 'text', 'markdown', 'pdf'].includes(artifact.kind) && !loaded) return <p role="status" className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Spinner className="size-3.5" aria-hidden="true" />Loading saved file…</p>;
   if (artifact.kind === 'html') return <iframe title={artifact.title} srcDoc={text} sandbox="allow-scripts allow-downloads" referrerPolicy="no-referrer" className="h-full min-h-80 w-full bg-white" />;
   if (artifact.kind === 'image') return <div className="flex h-full items-center justify-center overflow-auto p-6"><img src={artifact.contentUrl} alt={artifact.title} className="max-h-full max-w-full object-contain" /></div>;
   if (artifact.kind === 'pdf') return pdf ? <iframe title={artifact.title} src={pdf} sandbox="allow-scripts allow-downloads" className="h-full min-h-80 w-full bg-white" /> : <p role="status" className="p-6 text-sm">Opening PDF…</p>;
@@ -80,7 +81,7 @@ export function ArtifactPreviewController({ api, renderMarkdown }) {
         <Button variant="ghost" size="icon" onClick={close} aria-label="Close artifact"><X className="size-4" /></Button>
       </div>
       {artifact && error ? <p role="alert" className="px-6 py-2 text-sm text-destructive">{error}</p> : null}
-      <div className="min-h-0 flex-1">{artifact ? <ArtifactBody key={`${artifact.id}:${artifact.revision}`} artifact={artifact} renderMarkdown={renderMarkdown} /> : <div className="flex h-full items-center justify-center p-8">{error ? <p role="alert" className="text-sm text-destructive">{error}</p> : <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />Opening artifact…</p>}</div>}</div>
+      <div className="min-h-0 flex-1">{artifact ? <ArtifactBody key={`${artifact.id}:${artifact.revision}`} artifact={artifact} renderMarkdown={renderMarkdown} /> : <div className="flex h-full items-center justify-center p-8">{error ? <p role="alert" className="text-sm text-destructive">{error}</p> : <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner className="size-3.5" aria-hidden="true" />Opening artifact…</p>}</div>}</div>
     </DialogContent>
   </Dialog>;
 }

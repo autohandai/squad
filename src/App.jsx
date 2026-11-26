@@ -261,6 +261,7 @@ import {
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { IndeterminateBar, LoadingProgress, SaveStatus, TextShimmer } from "@/components/ui/loading";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -16379,9 +16380,9 @@ function AgentResponseMessage({ agent, message, replyAction, computerEvidence = 
         </div>
 
         {showProgressPlaceholder && !taskProgressFromMessage(message)?.items?.length ? (
-          <div className="flex max-w-xl items-center gap-2.5 py-1 text-sm text-muted-foreground">
-            <Spinner className="size-3.5" />
-            <span className="min-w-0 truncate">{progressLabel}</span>
+          <div role="status" className="flex max-w-xl items-center py-1 text-sm text-muted-foreground" data-testid="reply-progress">
+            {/* The stage the member is at, as shimmering words (ADR-0284). */}
+            <TextShimmer className="min-w-0 truncate">{progressLabel}</TextShimmer>
           </div>
         ) : null}
 

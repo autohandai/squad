@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { File, FileImage, FileSpreadsheet, FileText, LoaderCircle, Paperclip, RotateCcw, Type, X } from "lucide-react";
+import { File, FileImage, FileSpreadsheet, FileText, Paperclip, RotateCcw, Type, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ATTACHMENT_COUNT_LIMIT, ATTACHMENT_LIMIT_BYTES, attachmentLabel, attachmentMime, attachmentReferences, attachmentSize, transferHasFiles } from "@/lib/attachments";
 import { cn } from "@/lib/utils";
 import { ownershipUrl } from '@/lib/ownership-client';
+import { Spinner } from "@/components/ui/spinner";
 
 async function rasterPreview(file, rasterize = true) {
   const url = URL.createObjectURL(new Blob([file], { type: attachmentMime(file.name, file.type) }));
@@ -134,7 +135,7 @@ export function AttachmentList({ files = [], onRemove, onRetry, className }) {
       const content = <><FileThumbnail file={file} /><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{file.name}</span><span className={cn("mt-0.5 block text-[11px]", error ? "text-destructive" : "text-muted-foreground")}>{pending ? "Uploading…" : error ? file.error : `${attachmentLabel(file)} · ${attachmentSize(file.size)}`}</span></span></>;
       return <div key={file.clientId || file.id} data-attachment-id={file.id} data-attachment-status={file.status || "ready"} className="flex min-w-0 max-w-full items-center gap-2 rounded-md border border-border/70 px-2 py-1.5 sm:max-w-72">
         {onRemove || pending || error ? <div className="flex min-w-0 flex-1 items-center gap-2">{content}</div> : <a className="flex min-w-0 flex-1 items-center gap-2" href={ownershipUrl(file.url || `/api/attachments/${file.id}`)} download={file.name} target="_blank" rel="noreferrer">{content}</a>}
-        {pending ? <LoaderCircle className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-label={`Uploading ${file.name}`} /> : null}
+        {pending ? <Spinner className="size-3.5 text-muted-foreground" aria-label={`Uploading ${file.name}`} /> : null}
         {error && onRetry ? <Button type="button" variant="ghost" size="icon-sm" aria-label={`Retry ${file.name}`} onClick={() => onRetry(file.clientId)}><RotateCcw className="size-3.5" /></Button> : null}
         {onRemove ? <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove ${file.name}`} onClick={() => onRemove(file.clientId)}><X className="size-3.5" /></Button> : null}
       </div>;

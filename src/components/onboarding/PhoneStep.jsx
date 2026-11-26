@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PresenceDot } from "@/components/members/PresenceDot";
 import { PairingCode } from "@/components/settings/ComputersSettings";
 import { PairedPhones } from "@/components/settings/PairedPhones";
+import { Spinner } from "@/components/ui/spinner";
 
 /**
  * A phone outline with one member answering, as a hint of what pairing gives.
@@ -132,7 +133,7 @@ export function PhoneStep({ api, member, onBack, onSkip, onPaired, onFinish, inD
             <li className="flex gap-3"><span className="w-4 shrink-0 tabular-nums text-muted-foreground">3</span>Check that the six digits match, then approve here.</li>
             <li className="flex items-center gap-2 pt-2 text-muted-foreground" role="status"><span className="presence-dots" aria-hidden="true"><span /><span /><span /></span>Waiting for your iPhone…</li>
           </ol>
-          : phase === "preparing" ? <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status"><Loader2 className="size-4 animate-spin" aria-hidden="true" />Getting this computer ready for your phone…</p>
+          : phase === "preparing" ? <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status"><Spinner className="size-3.5" aria-hidden="true" />Getting this computer ready for your phone…</p>
           : <ul className="space-y-2.5 text-sm">
             <li className="flex gap-3"><Check className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />Ask a member anything while you’re out.</li>
             <li className="flex gap-3"><Check className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />Approve, redirect or stop work while you’re away.</li>
@@ -161,7 +162,7 @@ export function PhoneStep({ api, member, onBack, onSkip, onPaired, onFinish, inD
     <footer className={`${inDialog ? "mt-6 pt-4" : "mt-10 pt-6"} flex flex-wrap items-center gap-2 border-t border-border/70`}>
       {phase === "paired" ? <Button onClick={onFinish}>{inDialog ? "Done" : "Open your squad"}</Button>
         : phase === "offer" ? <><Button variant="outline" onClick={() => { setOffer(null); setPhase("intro"); }} disabled={busy}>Cancel</Button><Button variant="ghost" onClick={() => onSkip(devices.length ? undefined : "skipped")} disabled={busy}>{inDialog ? "Close" : "Not now"}</Button></>
-        : <><Button onClick={showCode} disabled={busy}>{busy ? <Loader2 className="animate-spin" /> : null}{devices.length ? "Pair another iPhone" : "Pair an iPhone"}</Button><Button variant="ghost" onClick={() => onSkip(devices.length ? undefined : "skipped")} disabled={busy}>{devices.length ? "Done" : inDialog ? "Close" : "Not now"}</Button></>}
+        : <><Button onClick={showCode} disabled={busy}>{busy ? <Spinner className="size-3.5" aria-hidden="true" /> : null}{devices.length ? "Pair another iPhone" : "Pair an iPhone"}</Button><Button variant="ghost" onClick={() => onSkip(devices.length ? undefined : "skipped")} disabled={busy}>{devices.length ? "Done" : inDialog ? "Close" : "Not now"}</Button></>}
       {onBack && phase !== "paired" && phase !== "offer" ? <Button variant="ghost" onClick={onBack} disabled={busy}>Back</Button> : null}
       <p className="basis-full pt-1 text-xs text-muted-foreground">{phase === "paired" ? "Pair more phones or disconnect this one in Settings › Computers." : inDialog ? "Manage paired phones in Settings › Computers." : "You can pair a phone later in Settings › Computers."}</p>
     </footer>

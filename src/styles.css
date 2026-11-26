@@ -849,3 +849,45 @@ html[data-quick-chat="true"][data-quick-chat-appearance="glass"] [data-testid="m
 }
 /* Quick Chat over Liquid Glass: the composer card lets the glass through, like the panel (ADR-0258). */
 html[data-quick-chat="true"][data-quick-chat-appearance="glass"] .quick-chat-composer-card { background: color-mix(in srgb, var(--card) 70%, transparent); }
+
+/* Loading states (ADR-0284): six patterns, one set of motions. Sweeps and
+   slides stop under reduced motion; the static form still reads. */
+@keyframes loading-shimmer { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+@keyframes loading-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+@keyframes loading-slide { 0% { left: -35%; width: 35%; } 60% { width: 45%; } 100% { left: 100%; width: 35%; } }
+@keyframes loading-spin { to { transform: rotate(360deg); } }
+@keyframes loading-check-in { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
+.loading-ring {
+  display: inline-block; flex: none; border-radius: 9999px;
+  border: 1.5px solid color-mix(in oklab, currentColor 22%, transparent);
+  border-top-color: currentColor;
+  animation: loading-spin .8s linear infinite;
+}
+.loading-text-shimmer {
+  color: transparent;
+  background-image: linear-gradient(90deg, var(--muted-foreground) 0%, var(--muted-foreground) 40%, color-mix(in oklab, var(--muted-foreground) 25%, var(--background)) 50%, var(--muted-foreground) 60%, var(--muted-foreground) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  animation: loading-shimmer 1.8s linear infinite;
+}
+.loading-skeleton { position: relative; overflow: hidden; background-color: color-mix(in oklab, var(--foreground) 7%, transparent); }
+.loading-skeleton::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--background) 55%, transparent), transparent);
+  transform: translateX(-100%);
+  animation: loading-sweep 1.6s ease-in-out infinite;
+}
+.loading-indeterminate { position: relative; overflow: hidden; height: 2px; }
+.loading-indeterminate::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: -35%; width: 35%;
+  border-radius: 9999px; background: var(--foreground); opacity: .7;
+  animation: loading-slide 1.4s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+.loading-check-in { animation: loading-check-in .22s cubic-bezier(.2, .8, .2, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .loading-ring { animation-duration: 2.4s; }
+  .loading-text-shimmer { animation: none; color: var(--muted-foreground); background: none; }
+  .loading-skeleton::after { animation: none; display: none; }
+  .loading-indeterminate::after { animation: none; left: 0; width: 100%; opacity: .18; }
+  .loading-check-in { animation: none; }
+}

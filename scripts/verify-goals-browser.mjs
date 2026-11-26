@@ -483,7 +483,7 @@ async function main() {
     report.quickFirstPaint = await cdp.evaluate("({ text: document.body.innerText, portraits: document.querySelectorAll('img').length, connectingLines: (document.body.innerText.match(/Connecting to Squad/g) || []).length })");
     assert(report.quickFirstPaint.portraits === 0 && report.quickFirstPaint.connectingLines === 1 && !report.quickFirstPaint.text.includes('Waking the squad'), "Initial compact connection paint has one line without logo/checklist overlap");
     await waitFor(() => cdp.evaluate("!document.querySelector('#boot')"), "initial static boot exits before steady compact connection");
-    report.quickStartup = await cdp.evaluate("({ text: document.body.innerText, spinners: document.querySelectorAll('.animate-spin').length, portraits: document.querySelectorAll('img').length, overflow: document.documentElement.scrollHeight > innerHeight || document.documentElement.scrollWidth > innerWidth })");
+    report.quickStartup = await cdp.evaluate("({ text: document.body.innerText, spinners: document.querySelectorAll('.animate-spin, .loading-ring').length, portraits: document.querySelectorAll('img').length, overflow: document.documentElement.scrollHeight > innerHeight || document.documentElement.scrollWidth > innerWidth })");
     assert.equal(report.quickStartup.portraits, 0, "Connecting quick chat does not render the full squad portrait wall");
     assert(report.quickStartup.spinners <= 1 && !report.quickStartup.overflow, "Compact startup has at most one waiting indicator and fits the window");
     assert(!report.quickStartup.text.includes("Waking the squad"), "Compact startup does not repeat the main boot checklist");
@@ -581,7 +581,7 @@ async function main() {
     assert(report.quickChat.scrollWidth <= report.quickChat.width && report.quickChat.scrollHeight <= report.quickChat.height, "380x520 quick chat keeps both axes inside the native window");
     assert.equal(report.quickChat.chatHeight, 520);
     assert(await visiblePlaceholder(), "Selected avatarless member keeps a visible CircleUser during goal progress");
-    assert(await cdp.evaluate("document.querySelectorAll('[data-testid=mac-quick-chat] .animate-spin').length <= 1"), "Compact goal has one progress spinner without duplicate loading metadata");
+    assert(await cdp.evaluate("document.querySelectorAll('[data-testid=mac-quick-chat] .animate-spin, [data-testid=mac-quick-chat] .loading-ring').length <= 1"), "Compact goal has one progress spinner without duplicate loading metadata");
     await screenshot("quick-chat-goal-380x520");
     await clickButton("Pause goal");
     await waitFor(() => cdp.evaluate("document.querySelector('[data-testid=agent-goal-progress]')?.dataset.goalStatus === 'paused'"), "quick shared goal pause");

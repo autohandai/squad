@@ -1,17 +1,17 @@
 import { useId, useMemo } from "react";
-import { Check, Circle, CircleX, LoaderCircle, Pause, Minus } from "lucide-react";
+import { StepGlyph } from "@/components/ui/loading";
 
 import { cn } from "@/lib/utils";
 import { normalizeTaskProgress, taskProgressFromMessage, taskProgressSummary } from "@/lib/task-progress";
 
 const ITEM_STATES = {
-  completed: { icon: Check, label: "Completed" },
-  in_progress: { icon: LoaderCircle, label: "In progress" },
-  pending: { icon: Circle, label: "Pending" },
-  failed: { icon: CircleX, label: "Failed" },
-  blocked: { icon: Pause, label: "Blocked" },
-  cancelled: { icon: Minus, label: "Cancelled" },
-  unknown: { icon: Circle, label: "State not reported" },
+  completed: { label: "Completed" },
+  in_progress: { label: "In progress" },
+  pending: { label: "Pending" },
+  failed: { label: "Failed" },
+  blocked: { label: "Blocked" },
+  cancelled: { label: "Cancelled" },
+  unknown: { label: "State not reported" },
 };
 
 function useTaskProgress(message, progress) {
@@ -34,12 +34,12 @@ export function AgentTaskChecklist({ message, progress, isLoading = false, class
       <ol className="flex flex-col gap-2" role="list">
         {checklist.items.map((item) => {
           const state = ITEM_STATES[item.status] || ITEM_STATES.unknown;
-          const Icon = state.icon;
           const completed = item.status === "completed";
           const failed = item.status === "failed";
           return (
             <li key={item.id} data-task-id={item.id} data-task-status={item.status} className="relative flex items-start gap-2 text-sm leading-5">
-              <Icon aria-hidden="true" className={cn("mt-0.5 size-3.5 shrink-0 text-muted-foreground", failed && "text-destructive", item.status === "in_progress" && isLoading && "motion-safe:animate-spin text-foreground")} />
+              {/* The progress-checklist marks (ADR-0284): the ring only while work is live. */}
+              <StepGlyph status={ITEM_STATES[item.status] ? item.status : "pending"} live={isLoading} />
               {/* `relative` on the item keeps the sr-only (absolute) label inside the
                   scrolled list; otherwise it is placed against the ScrollArea root,
                   escapes the viewport clip and stretches the Quick Chat document. */}

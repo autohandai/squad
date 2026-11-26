@@ -13,6 +13,7 @@ import { ConnectorLogo } from "./connectors/ConnectorLogo";
 import { CustomConnectorDialog } from "./connectors/CustomConnectorDialog";
 import { InstallDialog, SecretAwareInput } from "./connectors/InstallDialog";
 import { SignInWaiting } from "./connectors/SignInWaiting";
+import { IndeterminateBar } from "@/components/ui/loading";
 
 const RUNTIME_LINKS = { "Node.js": "https://nodejs.org/en/download", uv: "https://docs.astral.sh/uv/getting-started/installation/", Docker: "https://www.docker.com/products/docker-desktop/", ".NET 10": "https://dotnet.microsoft.com/download" };
 const TONE_DOT = { ok: "bg-emerald-500", muted: "bg-muted-foreground/40", error: "bg-destructive" };
@@ -471,7 +472,7 @@ export function ConnectorsSettings({ api, className }) {
             <Button type="button" size="sm" variant="ghost" onClick={() => setCustom({ open: true, connector: null })} aria-label="Add a custom connector">Add</Button>
           </div>
           {catalogue.items.map((item) => <CatalogRow key={item.name} item={item} onOpen={() => setInstalling(item)} />)}
-          {catalogue.loading ? <p className="flex items-center gap-2 py-3 text-xs text-muted-foreground" role="status"><Spinner className="size-3" />{catalogue.search ? `Searching the MCP Registry for “${catalogue.search}”…` : "Loading the catalogue…"}</p> : null}
+          {catalogue.loading ? <div className="py-3" data-testid="catalogue-loading"><IndeterminateBar className="mb-2" label="Loading the catalogue" /><p className="text-xs text-muted-foreground" role="status">{catalogue.search ? `Searching the MCP Registry for “${catalogue.search}”…` : "Loading the catalogue…"}</p></div> : null}
           {!catalogue.loading && !catalogue.items.length && !catalogue.error ? <p className="py-3 text-xs text-muted-foreground">Nothing in the MCP Registry matches “{catalogue.search}”. Add it as a custom connector instead.</p> : null}
         </div>
         {catalogue.source === "cache" || catalogue.source === "snapshot" || catalogue.source === "offline" ? (
