@@ -125,3 +125,14 @@ saved; it also caught a nested `<form>` that saved the routes instead).
 named, no room id, only the account's own). `check:mobile-host`,
 `check:mobile:browser`, `check:remote`, `check:team`, `check:server` and
 the build pass.
+
+## Rollout
+
+26 Nov 2026, at the owner's request ("i need that"): migration
+`0007_relay_computer_names.sql` applied to the Squad database and the Worker
+deployed from 0f2dcfd (version 607cff00) with the CI job's bindings, from the
+owner's Mac with `cf` (the workflow has no Cloudflare token, see ADR-0280).
+Checked afterwards: `/health`, `/v1/marketplace/categories` and the stable
+manifest answer; `GET /v1/mobile-relays` asks for sign-in. Computer names
+fill in as each computer running a release with this ADR reconnects to the
+relay.
