@@ -94,7 +94,7 @@ export function OwnershipBootstrap({ children }) {
         }).catch(failure => {
           if (disposed || reloading || leaving || current.current?.generation !== next.generation) return;
           hydrating = false;
-          setError(failure.name === 'QuotaExceededError' ? 'Your device’s local storage is full. Free some space, then retry. Your saved Squad is unchanged.' : failure.message || 'Your saved Squad could not be loaded.');
+          setError(failure.name === 'QuotaExceededError' ? 'Squad’s window cache is full. This is Squad’s own small cache, not your disk. Retry; your saved Squad is unchanged.' : failure.message || 'Your saved Squad could not be loaded.');
           setContext({ ...next, state: 'load_error' });
         });
         return;

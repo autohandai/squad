@@ -26,6 +26,7 @@ list to the section for that version.
 
 ### Fixed
 
+- **Squad no longer stops on "Your device's local storage is full" when your disk has space.** That screen was about Squad's own small window cache (about 5 MB), filled by chat history, not your disk. Squad now makes room by keeping history in memory for the session (the computer already keeps the real copy) and opens normally; members are kept first.
 - **Your squad comes back after updating from an older Squad.** Updating from a version before 0.1.22 opened setup with no members, although your squad was still on the computer. Squad now brings it back by itself the first time you open it: members, channels, chats and memories, with members paused until you look them over. A line at the top says so, with Undo. If your Squad was already set up again, or another account signs in on the same computer, the same line offers "Bring back your earlier squad" instead, with the folders filled in. Your earlier files are never changed.
 
 ## [0.1.25] - 2026-11-26
