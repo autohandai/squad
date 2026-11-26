@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { mkdir, open, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { readPersistentJson, writePersistentJson } from '../persistent-json.mjs';
 import { looksSecret } from '../team/store.mjs';
@@ -91,5 +91,24 @@ export function createArtifactService({ stateDir, members, emit = () => {} }) {
   async function memoryRecords() {
     return (await list()).map(artifactMemoryRecord);
   }
-  return { publish, list, get, content, memoryRecords };
+  /**
+   * The person removes a published file (ADR-0287): its record goes, and its
+   * saved bytes too unless another record shares them. The member's original
+   * file in its workspace is not touched.
+   */
+  function remove(id) {
+    const task = mutation.then(async () => {
+      const data = await state();
+      const record = data.records.find(row => row.id === id);
+      if (!record) throw fail('Artifact not found.', 404);
+      data.records = data.records.filter(row => row.id !== id);
+      await writePersistentJson(indexPath, data);
+      if (!data.records.some(row => row.contentHash === record.contentHash)) await rm(join(root, 'files', record.contentHash), { force: true });
+      emit('artifacts.changed', { ownerId: record.ownerId, id, removed: true });
+      return { removed: true, id };
+    });
+    mutation = task.catch(() => {});
+    return task;
+  }
+  return { publish, list, get, content, memoryRecords, remove };
 }

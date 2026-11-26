@@ -452,3 +452,4 @@
   - **Progress checklist** (`ProgressChecklist`, and `AgentTaskChecklist` for a member's reported tasks): an empty circle to do, the ring while doing (only while work is live), a green check when done.
 - The ring (`Spinner`) is the only spinner: no `Loader2`/`LoaderCircle` with `animate-spin`. Beside words that already say what is happening it is `aria-hidden`; alone it is announced.
 - Under reduced motion nothing sweeps or slides: shimmer words are drawn plainly, skeletons are flat, the indeterminate bar is a faint full line, the ring turns slowly.
+- A member's Library has two sections (ADR-0287): files it saved to the Library, then "Made in its folders" (name, path from home, Created or Edited, kind, size, date). Deleting is a quiet trash icon that turns into a destructive button (Delete, or Move to Trash) for four seconds; edited files have no delete.

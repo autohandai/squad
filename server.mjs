@@ -36,6 +36,7 @@ import { AUTOHAND_TEAM_WAIT_SECONDS, TEAM_MCP_SERVER_NAME, createTeamService, te
 import { createSquadManagement } from './server/team/member-management.mjs';
 import { createMemoryService } from "./server/memory/service.mjs";
 import { createArtifactService } from "./server/artifacts/service.mjs";
+import { createMemberFiles } from "./server/member-files.mjs";
 import { createSquadCloud } from "./server/squad-cloud/service.mjs";
 import { createProfileCloud } from "./server/squad-cloud/profiles.mjs";
 import { createBridgeClient } from "./server/control-plane/runtime.mjs";
@@ -605,6 +606,8 @@ bridgeEvents.on("member.stopped", ({ memberId }) => vault.closeMember(memberId))
 // The team (ADR-0134): roster, messages between members and shared memory,
 // reached by every member through one managed MCP server on any engine.
 const artifacts = createArtifactService({ stateDir: squadStateDir, members: teamMembers, emit: emitBridgeEvent });
+// Files each member made in its folders, recorded after every turn on any engine (ADR-0287).
+const memberFiles = createMemberFiles({ stateDir: squadStateDir });
 const team = createTeamService({
   reportFeedback: (input) => submitAgentFeedback(input),
   recipes: recipeStoreFor(squadStateDir),
@@ -8708,7 +8711,25 @@ function prepareAssignedRunContext(run, payload, agentRuntime, workspace) {
   return layerPayload;
 }
 
-async function executeChatTurnInner(payload, { stream, signal, startedAt = Date.now(), assignedRun = null, onSkillContinuity }) {
+/** The folders a member's turn may write in: where its new files are looked for afterwards. */
+function memberFileRoots(payload) {
+  const agent = payload?.agent || {};
+  return [agent.workspace, payload?.workspace, ...(Array.isArray(agent.projects) ? agent.projects.map(project => project?.path) : [])].filter(value => typeof value === "string" && value);
+}
+
+// Every engine's turn passes here; afterwards the files it changed in the
+// member's folders are recorded for its Files page (ADR-0287). The scan runs
+// after the reply and never delays or fails it.
+async function executeChatTurnInner(payload, options = {}) {
+  const memberId = String(payload?.agentId || payload?.agent?.id || "");
+  const since = Date.now();
+  try { return await executeChatTurnOnEngine(payload, options); }
+  finally {
+    if (memberId && payload?.dryRun !== true) void memberFiles.recordTurn({ memberId, roots: memberFileRoots(payload), since }).catch(error => logEvent(SEVERITY.WARN, `member files not recorded: ${error.message}`, { "event.name": "member.files.warn" }));
+  }
+}
+
+async function executeChatTurnOnEngine(payload, { stream, signal, startedAt = Date.now(), assignedRun = null, onSkillContinuity }) {
   if (signal?.aborted) throw new Error(stopMessage(signal));
   await memberAvailability.assertCanWork(payload);
   payload = { ...payload, _recall: await recallForTurn(payload), _workPlan: await workPlanForTurn(payload) };
@@ -8927,6 +8948,7 @@ function routeContext() {
     team,
     memoryLibrary,
     artifacts,
+    memberFiles,
     cloud,
     profileCloud,
     authorizeComputerUseGrant,

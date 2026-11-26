@@ -4,6 +4,9 @@ export async function handle(req, res, url, ctx) {
   if (url.pathname !== '/api/artifacts' && !url.pathname.startsWith('/api/artifacts/')) return false;
   try {
     if (!ctx.artifacts) throw Object.assign(new Error('The artifact library is unavailable.'), { status: 503 });
+    // The person deletes a published file from a member's Files (ADR-0287).
+    const removal = req.method === 'DELETE' && url.pathname.match(/^\/api\/artifacts\/(artifact_[a-f0-9-]{36})$/);
+    if (removal) { ctx.json(res, 200, { success: true, data: await ctx.artifacts.remove(removal[1]) }); return true; }
     if (req.method !== 'GET') throw Object.assign(new Error('Members publish artifacts through their active Squad tool.'), { status: 405 });
     if (url.pathname === '/api/artifacts') {
       ctx.json(res, 200, { success: true, data: { artifacts: await ctx.artifacts.list({ owner: url.searchParams.get('owner') || '', query: url.searchParams.get('query') || '' }) } }); return true;
