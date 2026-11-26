@@ -21,6 +21,8 @@ import { planRestore, materializeRestore } from './restore.mjs';
 import { MAX_DOCUMENT_BYTES } from '@autohand/squad-portable';
 import { createOwnedCloudBackups } from './cloud-service.mjs';
 import { prepareLegacyRecovery, legacyRecoveryInput } from './legacy-recovery.mjs';
+import { datasetPaths } from './datasets.mjs';
+import { datasetState, decide, readMarker, scanLegacy, writeMarker } from './legacy-auto-import.mjs';
 import { REMOTE_TRANSPORT_HEADER,REMOTE_TRANSPORT_VALUE } from '../remote/auth.mjs';
 import { createServer as createPortReservation } from 'node:net';
 
@@ -62,7 +64,7 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
   let releaseWriter, workerLedger, nativeHold = null;
   const engines=createEngineLedger(()=>workerLedger);
   let phase = 'verifying', generation = randomUUID(), verified = null, access = null, dataset = null, error = '', worker = null;
-  let pendingOperation=null;
+  let pendingOperation=null, legacyNotice=null, bringingBack=false;
   let observedFingerprint, transition = Promise.resolve(), closing = false, teamCheckedAt = 0, workerStarting, startingChild;
   // api.autohand.ai answered /v1/accounts with intermittent 500s (2026-11-17):
   // one failed 15-second recheck blocked a team Squad until Retry, and leaving
@@ -90,12 +92,13 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
   const childIntents = new WeakMap();
   const childLaunches = new WeakMap();
   const childJobs = new WeakMap();
-  const publicContext = () => ({ state: phase, generation, actor: verified?.actor || null,
+  // While an earlier squad is brought back the window shows Squad loading, never setup.
+  const publicContext = () => ({ state: bringingBack && phase !== 'closed' ? 'loading' : phase, generation, actor: verified?.actor || null,
     owner: access?.owner || null, ownerLabel: access?.label || '', role: access?.role || '',
-    canWrite: phase === 'ready' && access?.canWrite === true, scopeKey: access ? ownerKey(access.owner) : '',
+    canWrite: !bringingBack && phase === 'ready' && access?.canWrite === true, scopeKey: access ? ownerKey(access.owner) : '',
     datasetId: dataset?.datasetId || '',
     storageKey: verified && access && dataset ? `${actorKey(verified.actor)}.${ownerKey(access.owner)}.${dataset.datasetId}` : '',
-    offline: Boolean(verified?.offline), teamSquads: Boolean(verified && teamSquads.enabled(verified.fingerprint)), error,canRestartData:phase==='awaiting_restart'&&access?.canWrite===true, pendingOperation:pendingOperation?operationSummary(pendingOperation):null });
+    offline: Boolean(verified?.offline), teamSquads: Boolean(verified && teamSquads.enabled(verified.fingerprint)), error,canRestartData:phase==='awaiting_restart'&&access?.canWrite===true, pendingOperation:pendingOperation?operationSummary(pendingOperation):null, legacy: phase==='ready'?legacyNotice:null });
   const operationSummary=row=>({id:row.id,kind:row.kind,phase:row.phase,revision:row.revision,beforeDatasetId:row.beforeDatasetId,afterDatasetId:row.afterDatasetId,error:row.error,updatedAt:row.updatedAt,...(row.result?{result:row.result}:{})});
 
   async function publishReceipt() {
@@ -183,6 +186,64 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
     transition = next.catch(() => {}); return next;
   }
   async function journal() {return createOperationJournal({serviceRoot,owner:access.owner,actor:verified.actor});}
+  // ADR-0283: a squad from before account ownership comes back on its own the
+  // first time a personal account opens a blank Squad on this computer;
+  // otherwise it is offered. The copy is ADR-0196's verified recovery and the
+  // restore transaction; the old files are never changed.
+  async function legacyStep() {
+    legacyNotice=null;
+    if(phase!=='ready'||!access?.canWrite)return;
+    const me=actorKey(verified.actor),marker=await readMarker(serviceRoot);
+    if(marker?.status==='imported'&&marker.actor===me&&marker.afterDatasetId===dataset.datasetId) {
+      if(!marker.noticeDismissed)legacyNotice={status:'imported',memberCount:marker.memberCount||0,chatCount:marker.chatCount||0,omissions:(marker.omissions||[]).slice(0,20),undo:true};
+      return;
+    }
+    const legacy=await scanLegacy(serviceRoot);if(!legacy.members.length)return;
+    const choice=decide({actor:me,ownerKind:access.owner.kind,canWrite:access.canWrite,marker,legacy,dataset:await datasetState(dataset)});
+    const offer=(status,extra={})=>{legacyNotice={status,memberCount:choice.missing.length,names:choice.missing.slice(0,5).map(member=>member.name),stateRoot:legacy.stateRoot,appRoot:legacy.appRoot,...extra};};
+    if(choice.action==='offer')return offer(marker?.status==='failed'&&marker.actor===me?'failed':'offer',marker?.status==='failed'&&marker.actor===me?{error:marker.error||''}:{});
+    if(choice.action!=='import')return;
+    const before=dataset.datasetId,base={actor:me,ownerKey:ownerKey(access.owner),beforeDatasetId:before,startedAt:new Date().toISOString()};
+    await writeMarker(serviceRoot,{...base,status:'importing'});
+    await publishReceipt();
+    console.log(`Squad from before the update found (${legacy.members.length} members); bringing it back automatically.`);
+    try {
+      const captured=capturedContext();
+      const plan=await prepareLegacyRecovery(captured,{id:randomUUID(),stateRoot:legacy.stateRoot,appRoot:legacy.appRoot,consent:'preview-unowned-data'});
+      const {document}=await createImportSources(captured).load(plan.id);
+      const chatCount=document.agents.reduce((sum,agent)=>sum+(agent.conversations?.length||0),0);
+      const omissions=(document.omissions||[]).map(item=>({path:String(item.path||'').slice(0,300),reason:String(item.reason||'').slice(0,300)}));
+      const row=await dataOperation({id:randomUUID(),kind:'restore',beforeDatasetId:before,sourceId:plan.id,sourceDigest:plan.sha256},generation);
+      if(row.phase!=='awaiting_restart')throw fail(row.error||'The earlier squad could not be brought back.');
+      await (await journal()).acknowledge(row.id,row.revision);
+      pendingOperation=null;phase='ready';error='';
+      await writeMarker(serviceRoot,{...base,status:'imported',operationId:row.id,afterDatasetId:dataset.datasetId,memberCount:plan.memberCount,chatCount,omissions:omissions.slice(0,200),noticeDismissed:false});
+      console.log(`Brought back the earlier squad: ${plan.memberCount} members, ${chatCount} chats (operation ${row.id}).`);
+      legacyNotice={status:'imported',memberCount:plan.memberCount,chatCount,omissions:omissions.slice(0,20),undo:true};
+    } catch(failure) {
+      const message=String(failure?.message||'The earlier squad could not be brought back.').slice(0,500);
+      console.error(`Bringing back the earlier squad failed: ${message}`);
+      await writeMarker(serviceRoot,{...base,status:'failed',error:message}).catch(()=>{});
+      if(phase==='ready'&&dataset?.datasetId===before)offer('failed',{error:message});
+    }
+  }
+  async function undoLegacyImport(departing) {
+    if(departing!==generation||phase!=='ready')throw fail('The selected Squad changed. Refresh before undoing.');
+    await authorizeCurrent(true);
+    const marker=await readMarker(serviceRoot),key=ownerKey(access.owner);
+    if(marker?.status!=='imported'||marker.actor!==actorKey(verified.actor)||marker.afterDatasetId!==dataset.datasetId)throw fail('There is no automatic import to undo for this Squad.',409,'legacy_undo_unavailable');
+    const before=datasetPaths(serviceRoot,key,marker.beforeDatasetId);
+    phase='draining';revoke();await publishReceipt();
+    try {
+      await quiesce('Undoing the automatic import. Background work stays paused.');
+      const {assertCurrent}=capturedContext();
+      dataset=await publishDataset(serviceRoot,key,before,marker.afterDatasetId,assertCurrent);
+      await writeMarker(serviceRoot,{...marker,status:'undone',undoneAt:new Date().toISOString()});
+      console.log(`Automatic import undone; dataset ${marker.afterDatasetId} kept on disk.`);
+    } finally {
+      phase='ready';error='';legacyNotice=null;revoke();await publishReceipt();await resumeNative();
+    }
+  }
   async function recoverOperations() {
     // activate/select hold the machine writer lease and have already drained
     // native/Node writers. Recovery compares the durable publication pointer.
@@ -289,6 +350,8 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
       dataset = await ensureDataset(serviceRoot, ownerKey(access.owner));
       if (identity.credential()?.fingerprint !== current.fingerprint) { verified = null; access = null; return; }
       await recoverOperations();error = ''; teamCheckedAt = teamVerifiedAt = Date.now(); blockedByOutage = false;
+      bringingBack = true;
+      try { await legacyStep(); } catch (failure) { legacyNotice = null; console.error(`Earlier squad check failed: ${failure.message}`); } finally { bringingBack = false; }
       await publishReceipt();
       if(phase==='ready')await resumeNative();
     } catch (failure) {
@@ -341,7 +404,7 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
     const { root: base, dataRoot, appRoot, workspaceRoot, logsRoot, datasetId } = paths;
     for (const name of ['state', 'app', 'member-homes', 'logs']) await ownedDirectory(serviceRoot, ['owners', key, 'datasets', datasetId, name], { create: false });
     const context = { version: 1, generation: expected, actor: phase === 'ready' ? verified.actor : null, owner: phase === 'ready' ? access.owner : null,
-      label: access?.label || '', canWrite: phase === 'ready' && access?.canWrite === true, role: access?.role || '',
+      label: access?.label || '', canWrite: !bringingBack && phase === 'ready' && access?.canWrite === true, role: access?.role || '',
       credentialFingerprint: phase === 'ready' ? verified.fingerprint : '',
       serviceRoot, datasetId, dataRoot, appRoot, workspaceRoot, publicUrl: serviceOrigin() };
     const token = randomBytes(32).toString('hex');
@@ -479,6 +542,22 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
         }
         await transition;
         if (!verified || !sameContext(req, url)) throw fail('The account changed. Reopen Squad.');
+        if(url.pathname==='/api/ownership/legacy/undo'&&req.method==='POST') {
+          z.object({confirm:z.literal('undo-automatic-import')}).strict().parse(await readBody(req,512));
+          const departing=generation;await schedule(()=>undoLegacyImport(departing));
+          json(res,200,{success:true,data:publicContext()});return;
+        }
+        if(url.pathname==='/api/ownership/legacy/dismiss'&&req.method==='POST') {
+          z.object({}).strict().parse(await readBody(req,512));
+          await schedule(async()=>{
+            const marker=await readMarker(serviceRoot);
+            const me=actorKey(verified.actor);
+            if(marker?.status==='imported'&&marker.actor===me&&marker.afterDatasetId===dataset?.datasetId)await writeMarker(serviceRoot,{...marker,noticeDismissed:true});
+            else await writeMarker(serviceRoot,{...(marker||{status:'offered'}),dismissedBy:[...new Set([...(marker?.dismissedBy||[]),me])]});
+            legacyNotice=null;await publishReceipt();
+          });
+          json(res,200,{success:true,data:publicContext()});return;
+        }
         if(url.pathname==='/api/ownership/legacy/preview'&&req.method==='POST') {
           const departing=generation,input=legacyRecoveryInput.parse(await readBody(req,8*1024*1024));
           if(departing!==generation||phase!=='ready')throw fail('The selected Squad changed before recovery.');

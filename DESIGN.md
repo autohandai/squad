@@ -439,3 +439,4 @@
 - Features limited to some accounts (agent email: autohand.ai) are invisible to everyone else: no row, no explanation (ADR-0262 revised).
 - A member's sections start with Home, Communications, Permissions: who it is, how to reach it, what it may do (ADR-0266). One setting lives on one page.
 - An update the person has not installed is still "Version X is available": the installer being open is a description under that title, never the title itself, and a download for an older release gives way to the newer one in Settings, the sidebar and the failed-update screen (ADR-0279).
+- A squad brought back from before account ownership is announced in one quiet line under the window's top, like the update notice (ADR-0283): what came back, that earlier files are untouched, then What was left out, Undo (asks once, inline) and Done. The offer uses the same line with the member names and "Bring back your earlier squad"; it also shows during setup.

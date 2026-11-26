@@ -9,7 +9,8 @@ import { currentOwnership } from "@/lib/owned-storage";
 const browserKeys = ['agents', 'removedAgents', 'messages', 'channels', 'channelThreads', 'channelMessages'];
 export function LegacyRecoverySettings({ api, onPrepared }) {
   const context=currentOwnership();
-  const [paths,setPaths]=useState({stateRoot:'',appRoot:'',workspaceRoot:''});
+  // An earlier squad found on this computer (ADR-0283) fills in its folders.
+  const [paths,setPaths]=useState({stateRoot:context?.legacy?.stateRoot||'',appRoot:context?.legacy?.appRoot||'',workspaceRoot:''});
   const [includeBrowser,setIncludeBrowser]=useState(false),[consent,setConsent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[prepared,setPrepared]=useState(false);
   async function preview() {
     setBusy(true);setError('');setPrepared(false);
@@ -27,7 +28,7 @@ export function LegacyRecoverySettings({ api, onPrepared }) {
     } catch(failure){setError(failure.message||'The old data could not be previewed. Nothing was replaced.');}
     finally{setBusy(false);}
   }
-  return <section className="space-y-4 py-6" aria-labelledby="legacy-recovery-title">
+  return <section id="legacy-recovery" className="space-y-4 py-6" aria-labelledby="legacy-recovery-title">
     <h2 id="legacy-recovery-title" className="font-medium">Recover older unowned data</h2>
     <p className="max-w-prose text-muted-foreground">Choose data saved before Squad recorded account ownership. Original files and browser data stay intact. A verified preview appears under Restore a backup; importing into {context.ownerLabel} requires a separate replacement confirmation.</p>
     <div className="max-w-xl space-y-3">

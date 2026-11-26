@@ -1,6 +1,6 @@
 # ADR-0196: Recover unowned data only through an explicit import preview
 
-Status: Implemented; part of the account-owned Squads change, not released.
+Status: Implemented; amended by ADR-0283 (2026-11-26): a blank personal Squad now brings back the squad from before ownership automatically, once per computer; everyone else is offered it. The manual page below is unchanged and is where the offer leads.
 
 ## Context and evidence
 

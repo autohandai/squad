@@ -22,6 +22,10 @@ list to the section for that version.
 
 - The phone's "From anywhere" is now **Reach from anywhere, through Squad relay by Autohand**, with the relay's address and how it's doing ("Connected · 38 ms", or when it last answered). **Use a different relay** points phones at a relay you or your team run; it must be an HTTPS address. The channel-sharing relay page is now called **Team relay**.
 
+### Fixed
+
+- **Your squad comes back after updating from an older Squad.** Updating from a version before 0.1.22 opened setup with no members, although your squad was still on the computer. Squad now brings it back by itself the first time you open it: members, channels, chats and memories, with members paused until you look them over. A line at the top says so, with Undo. If your Squad was already set up again, or another account signs in on the same computer, the same line offers "Bring back your earlier squad" instead, with the folders filled in. Your earlier files are never changed.
+
 ## [0.1.25] - 2026-11-26
 
 ### Added

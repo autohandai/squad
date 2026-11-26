@@ -426,6 +426,7 @@ import { taskProgressFromMessage } from "@/lib/task-progress";
 import { SidebarUpdateNotice } from "@/components/account/SidebarUpdateNotice";
 import { UpdateScreen } from "@/components/account/UpdateScreen";
 import { UpdateConsentNotice } from "@/components/account/UpdateConsentNotice";
+import { LegacyImportNotice } from "@/components/account/LegacyImportNotice";
 import { SquadAnnouncements } from "@/components/account/SquadAnnouncements";
 import { UpdatesSettings } from "@/components/settings/UpdatesSettings";
 import { UPDATE_BUSY_PHASES, updateView } from "@/lib/update-status";
@@ -10446,6 +10447,7 @@ function App() {
           <main className="app-main min-w-0">
             <SquadAnnouncements key={runtime?.account?.email || "signed-out"} api={api} enabled={!isOnboarding && runtime?.account?.signedIn === true} busy={agents.some(agent => entryFor(agent).state === "working")} showErrors={routePath === "/settings/updates"} />
             <UpdateConsentNotice updates={updates} operation={updatesUpgradeResult} onReview={() => openSettings("updates")} hidden={isOnboarding || routePath === "/settings/updates"} />
+            <LegacyImportNotice api={api} onOpenBackups={() => openSettings("backups")} />
             {updateScreen.open ? <UpdateScreen updates={updates} operation={updatesUpgradeResult} error={updatesError} requested={updateScreen.pending} onRetry={() => void installUpdate()} onDownload={() => { setUpdateScreen({ open: false, pending: false }); void upgradeApp(); }} onOpenReleases={openReleasePage} onClose={() => { setUpdateScreen({ open: false, pending: false }); setUpdatesError(""); }} /> : null}
             {bridgeLine ? <div role="status" aria-live="polite" data-testid="bridge-status" className="px-6 py-2 text-xs text-muted-foreground">{bridgeLine}</div> : null}
             {exportNotice ? <div role={exportNotice.error ? "alert" : "status"} className={`flex items-start gap-3 px-6 py-2 text-sm ${exportNotice.error ? "text-destructive" : "text-muted-foreground"}`} data-testid="text-export-status">
