@@ -25,6 +25,11 @@ export function listingSummary(kind: string, document: TeamDocument): ListingSum
 export const TEMPLATE_LIMITS: Readonly<{ bytes: number; skills: number; notes: number; tagline: number; description: number; tags: number; tag: number; name: number; note: number }>;
 export const CATEGORIES: ReadonlyArray<{ id: string; label: string }>;
 export const CATEGORY_IDS: ReadonlyArray<string>;
+export const LISTING_CONNECTOR_IDS: ReadonlyArray<string>;
+export const LISTING_CONNECTOR_LIMIT: number;
+export interface AgentFields { key?: string; name: string; role: string; bird: string; instructions: string; brainCard: Record<string, string>; skills: Array<{ name: string; description: string; text: string }>; notes: string }
+export function agentTemplateFromFields(fields: Partial<AgentFields> & { tagline?: string }): { document: TeamDocument; findings: Array<{ path: string; kinds: string[] }> };
+export function agentFieldsFromTemplate(document: TeamDocument): AgentFields & { key: string };
 export const CREATOR_KINDS: ReadonlyArray<string>;
 export const LISTING_STATUSES: ReadonlyArray<string>;
 export const REPORT_REASONS: ReadonlyArray<{ id: string; label: string }>;
