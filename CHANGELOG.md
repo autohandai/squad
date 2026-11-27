@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Added
+
+- **Publish to the Marketplace from your iPhone.** Squad for iPhone can publish a member to the Marketplace through this computer: it shows exactly what will be public, blocks anything that looks like a secret, and lists what you've published with its status, so you can unpublish from the phone too.
+
 ### Changed
 
 - **Squad starts on one screen.** Opening Squad used to show three screens in a row: a dark one, a dark one laid out differently, then a light checklist. Now one screen stays from the first frame until Squad is ready, in the theme you chose in Settings even when your Mac is set otherwise. The logo and the three birds stay put and only the line under them says what Squad is doing. A problem at startup shows on that same screen, with Retry.

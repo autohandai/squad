@@ -75,6 +75,9 @@ try {
   assert.match(JSON.stringify(await request('member.update', { memberID: voiced.id, expectedRevision: edited.data.revision })), /Change a field/);
   // Contract 0.11 (ADR-0281): personality, skills and the avatar from the phone.
   assert.ok(snapshot.data.capabilities.includes('profileEdits'), 'the host offers avatar, personality and skill edits');
+  // Contract 0.12 (ADR-0289): publishing to the marketplace from the phone.
+  assert.ok(snapshot.data.capabilities.includes('publish'), 'the host offers publishing from the phone');
+  assert.match(JSON.stringify(await request('marketplace.publish.context', { memberID: 'nobody-here' })), /no longer in this Squad/, 'publishing checks the member exists on this computer');
   const personal = await request('member.update', { memberID: voiced.id, expectedRevision: edited.data.revision, personality: 'Dry humour, short answers.' });
   assert.equal(personal.ok, true, JSON.stringify(personal));
   assert.equal(personal.data.personality, 'Dry humour, short answers.');

@@ -50,6 +50,8 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
   // The marketplace (contract 0.5, ADR-0256): reads through this computer,
   // an Add the Squad window carries out.
   const marketplace = createPhoneMarketplace({ bridge, cards, emit, confirmOnComputer: () => preferences().confirmPhoneAdds !== false,
+    // The member record the desktop's Publish dialog starts from (ADR-0289).
+    memberRecord: async id => { await member(id); return (await bridge.get('/api/channels'))?.agentChannelAccess?.[id]?.agent || null; },
     canWrite: async () => { const context = await bridge.get('/api/ownership/context'); return Boolean(context?.canWrite) && context.state === 'ready'; } });
   // The 256 px renders the menu bar reads (scripts/build-bird-cast.mjs);
   // the installed app serves dist/, a checkout also has public/.
@@ -237,7 +239,7 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
             lastMessageAt: last?.createdAt || null, preview: last ? { author: last.role === 'user' ? 'You' : last.authorName || last.agentId || 'Member', text: clip(last.body, 140) } : null };
         }).sort((a, b) => String(b.lastMessageAt || b.createdAt).localeCompare(String(a.lastMessageAt || a.createdAt))).slice(0, 50);
         return { computer: { id: computerID, name: computerName, version, connectedAt: new Date().toISOString() },
-          capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : []), ...(rootDir ? ['avatars'] : []), ...(channels ? ['groups'] : []), ...(cards ? ['cards', 'inbox'] : []), 'marketplace', 'feedback', 'voices', 'profiles', 'profileEdits'],
+          capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : []), ...(rootDir ? ['avatars'] : []), ...(channels ? ['groups'] : []), ...(cards ? ['cards', 'inbox'] : []), 'marketplace', 'feedback', 'voices', 'profiles', 'profileEdits', 'publish'],
           ...(context.actor ? { account: { id: context.actor.id, name: context.actor.name || '', email: context.actor.email || '' } } : {}),
           members: members.map(row => {
             const remote = (Array.isArray(remotes) ? remotes : remotes?.members || []).find(remote => remote.memberId === row.id);
