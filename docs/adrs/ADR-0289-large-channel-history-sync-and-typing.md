@@ -50,3 +50,44 @@ size of the history irrelevant to each save.
   returns all of it at start (19 MB on the reporter's Mac). Trimming stored
   traces, or fetching them on demand, is the next step and is not done here.
 - One message larger than 16 MiB still cannot be saved; it is now named as such.
+
+## 2. Typing never redraws the channel (#86)
+
+### Context
+
+The reporter saw the whole app slow down over days, up to "10+ seconds
+between keystrokes showing in the chat box". Fixing the sync (section 1) did
+not change typing: on the same fixture keystrokes still took a median of
+167 ms to appear (worst ~490 ms), with 44 long main-thread tasks totalling
+8.5 s. A CPU profile of the keystrokes (`CHANNEL_HISTORY_PROFILE=<file>`)
+showed the time in React creating elements for every message in
+`ChannelStream` and its `dayKey`/`fullTime` date work per message.
+
+The cause: the channel page keeps the composer `draft` in the same component
+that renders `<ChannelStream>` with inline callbacks, so each keystroke
+re-rendered every message with its work details. Two values defeated any
+memo even without that: `channelThreads[id] || []` and
+`workflowsByChannel[id] || []` made a new empty array on every render, which
+re-ran `channelTranscript` over the whole history, and `members` was rebuilt
+each render.
+
+### Decision
+
+Build the stream element in a `useMemo` keyed on what it shows (messages,
+members, reactions, settings, copy, the handlers from App), never on the
+draft; share one frozen empty array (`NO_ITEMS`) and memoise `members`. The
+composer, the anchor chips and everything else that reads the draft still
+re-render on each keystroke.
+
+### Consequences
+
+- Same fixture: keystrokes appear in 16 ms (one frame) at the median; the
+  stream is absent from the keystroke profile. Measured with React's
+  development build in the harness, so absolute numbers are higher than the
+  packaged app, the ratio is what matters.
+- The memo's dependency list must grow with any new value the stream reads.
+  A missing dependency shows a stale stream; `check:channel-history:browser`,
+  `check:channels:browser` and `check:channel-goals:browser` exercise it.
+- Not addressed: the first render of a very long channel (the remaining long
+  tasks happen at load) and slowness elsewhere if other pages hold a draft
+  next to a large list. Windowing the stream would cover the first.

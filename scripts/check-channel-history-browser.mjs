@@ -94,9 +94,10 @@ try {
   if (!REPORT) {
     assert.equal(result.banner, false, 'no "Channel changes could not be saved" banner with a large history');
     assert.ok(result.largestSyncBytes < 2 * 1024 * 1024, `a sync sends what changed, not the history (largest ${result.largestSyncBytes} bytes)`);
+    assert.ok(result.keystrokeMedianMs < 120, `typing stays responsive (median ${median} ms)`);
     const saved = (await bridge.api('/api/channels')).data.messages.find((message) => message.id === 'cst-m-195');
     assert.equal(saved.trace.events.length, 1100, 'stored traces are untouched by the smaller syncs');
-    console.log('Channel history browser check passed: an 18 MB channel loads, syncs only what changed with no "request body too large" banner, and keeps its stored traces.');
+    console.log('Channel history browser check passed: an 18 MB channel loads, syncs only what changed with no "request body too large" banner, keeps its stored traces, and typing stays responsive.');
   }
 } finally {
   await browser?.close();

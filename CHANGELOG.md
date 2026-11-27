@@ -13,6 +13,7 @@ list to the section for that version.
 ### Fixed
 
 - **Channels with a long history save again.** Squad used to send a channel's whole history, with every agent's work details, each time anything changed, and once that passed 16 MB every save failed with "request body too large" (#87). Squad now sends only what changed, a few hundred bytes for a typical change.
+- **Typing stays quick in a long channel.** Each keystroke used to redraw every message in the channel with its work details, so after days of history typing could lag by seconds (#86). Typing now only redraws the message box.
 
 ### Changed
 

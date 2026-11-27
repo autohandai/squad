@@ -1382,6 +1382,8 @@ const MISSION_CONTROL_ROUTE = "/work";
 const LEGACY_WORK_ROUTE = "/mission-control";
 const SQUAD_DIRECTORY_ROUTE = "/squad";
 const CHANNELS_ROUTE = "/channels";
+/** One shared empty list, so `x || NO_ITEMS` keeps memoised values stable. */
+const NO_ITEMS = Object.freeze([]);
 // Channel sync (issues #86, #87): changed messages only, coalesced, and split
 // so one request stays well under the bridge's 16 MiB body limit.
 const CHANNEL_SYNC_DELAY_MS = 400;
@@ -11335,8 +11337,8 @@ function ChannelsPage({
   const channel = channels.find((item) => item.id === activeChannelId) || null;
   const goalSetup = channel?.goalSetup;
   const needsGoal = Boolean(goalSetup && goalSetup.status !== "ready");
-  const threads = channel ? channelThreads[channel.id] || [] : [];
-  const channelMessages = channel ? messagesByChannel[channel.id] || [] : [];
+  const threads = channel ? channelThreads[channel.id] || NO_ITEMS : NO_ITEMS;
+  const channelMessages = channel ? messagesByChannel[channel.id] || NO_ITEMS : NO_ITEMS;
   // Repository rows sit in the stream in time order beside the messages.
   const streamWithGitEvents = useMemo(
     () => {
@@ -11345,11 +11347,11 @@ function ChannelsPage({
     },
     [channelMessages, threads, channel?.events, channel?.id]
   );
-  const members = channel
+  const members = useMemo(() => (channel
     ? channel.memberIds.map((memberId) => agents.find((agent) => agent.id === memberId)).filter(Boolean)
-    : [];
+    : NO_ITEMS), [channel, agents]);
   // Channel workflows (#28): settings section plus the run rows in the stream.
-  const channelWorkflows = channel ? workflowsByChannel[channel.id] || [] : [];
+  const channelWorkflows = channel ? workflowsByChannel[channel.id] || NO_ITEMS : NO_ITEMS;
 
   // Git in channels (#29): the route plug-in owns the binding and polls every
   // 30 s; the page mirrors its rows onto the channel and refreshes while open.
@@ -11633,6 +11635,98 @@ function ChannelsPage({
   }
   void projectDraft;
 
+  // Typing in the composer changes only the draft. Re-rendering every
+  // message (and its work details) on each keystroke made a long channel lag
+  // by seconds (issue #86), so the stream is rebuilt only when what it shows changes.
+  const channelStreamElement = useMemo(() => (
+      <ChannelStream
+        channel={channel}
+        threadedReplies={chatSettings.threadedReplies === true}
+        copy={copy}
+        onTeamProposal={(message, decision) => onTeamProposal?.(channel.id, message, decision)}
+        messages={streamWithGitEvents}
+        renderEvent={(event) => (!isGitEvent(event) ? null : (
+          <GitEventRow
+            event={event}
+            copy={copy}
+            locale={locale}
+            onOpen={(item) => item?.url && window.open(item.url, "_blank", "noopener")}
+          />
+        ))}
+        agents={agents}
+        userName={accountProfile.name}
+        locale={locale}
+        lastReadAt={lastReadAt}
+        reactionsByMessage={reactionsByMessage}
+        renderBody={(message) => {
+          const found = message.workflowRunId ? findWorkflowRun(channelWorkflows, message.workflowRunId) : null;
+          if (message.workflowApproval) {
+            return (
+              <div data-message-id={message.id}>
+                {found ? (
+                  <WorkflowRunMessage run={found.run} workflow={found.workflow} members={agents} showName={message.role !== "system"} onApprove={onApproveWorkflowRun} onDecline={onDeclineWorkflowRun} copy={copy} />
+                ) : (
+                  <span className="text-muted-foreground">{message.body}</span>
+                )}
+              </div>
+            );
+          }
+          return (
+            <div data-message-id={message.id}>
+              {message.workflowRunId ? (
+                <WorkflowTag workflow={found?.workflow || { name: message.workflowName || "" }} run={found?.run} stepId={message.stepId} showName={message.role !== "system"} copy={copy} className="mb-1" />
+              ) : null}
+              <div className={message.role === "user" ? "chat-user-bubble" : message.status !== "error" && (message.role === "agent" || message.agentId) ? "chat-agent-answer" : undefined}>
+                <MarkdownBlocks text={message.role === "user" ? message.body || "" : withoutRecoveryNotices(message.body || "")} />
+              </div>
+              {(message.attachments || []).map((attachment) => (
+                <MediaAttachment key={attachment.id} attachment={attachment} anchors={channelAnchors} onAnchor={addAnchorToDraft} copy={copy} />
+              ))}
+              {message.role === "agent" || message.agentId ? (
+                <AgentWorkDetails message={message} isLoading={message.status === "loading"} durationLabel={messageDurationLabel(message)} copy={copy} mode={chatSettings.workDetails} />
+              ) : null}
+            </div>
+          );
+        }}
+        renderAvatar={(message) => <ChannelMessageAvatar message={message} agents={agents} />}
+        renderMemberAvatar={(agent, avatarClassName) => <AgentAvatar agent={agent} className={avatarClassName} />}
+        repliedLabel={copy.repliedLabel || "replied"}
+        onSetUpReactionFlow={() => setReactionFlow({ emoji: "\u{1F680}", action: "prompt", memberId: members[0]?.id || "", prompt: "", url: "", method: "POST" })}
+        setUpFlowLabel={copy.setUpReactionFlow || "Make a reaction do something…"}
+        authorName={(message) => (message.role === "system" && message.workflowRunId ? message.workflowName || copy.workflow || "Workflow" : channelMessageAuthorName(message, agents, accountProfile.name))}
+        onReact={onReact}
+        onReply={(message) => setReplyTo(message)}
+        renderActions={(message) => {
+          const body = String(message.body || "").trim();
+          if (!body || message.status === "loading") return null;
+          const agentMessage = message.role === "agent" || message.agentId;
+          return (
+            <>
+              {agentMessage ? <ReadAloudButton compact text={message.body} message={message} memberId={message.agentId || ""} copy={copy} /> : null}
+              <CopyButton text={message.role === "user" ? message.body || "" : withoutRecoveryNotices(message.body || "")} label="Copy message" />
+            </>
+          );
+        }}
+        emptyLabel={needsGoal ? null : members.length ? (
+          // Say who is here and how a message reaches them.
+          <>
+            {copy.channelNoThreads}{" "}
+            {`${members.slice(0, 3).map((member) => member.name).join(", ")}${members.length > 3 ? ` and ${members.length - 3} more` : ""} ${members.length === 1 ? "is" : "are"} in this channel. A message goes to everyone; start it with @${members[0].name} to ask one of them.`}
+          </>
+        ) : (
+          // An empty channel can do nothing; say how to fix that here.
+          <>
+            {copy.channelNoMembers}{" "}
+            <button type="button" className="font-medium text-foreground underline-offset-4 hover:underline" onClick={() => setManageMembersOpen(true)}>
+              {copy.addChannelMembers || "Add members"}
+            </button>
+          </>
+        )}
+        newLabel={copy.newMessages || "New"}
+        typingLabel={copy.isTyping || "is typing…"}
+      />
+  ), [channel, chatSettings.threadedReplies, chatSettings.workDetails, copy, onTeamProposal, streamWithGitEvents, agents, accountProfile.name, locale, lastReadAt, reactionsByMessage, channelWorkflows, onApproveWorkflowRun, onDeclineWorkflowRun, channelAnchors, members, needsGoal, onReact]);
+
   const replyThread = replyTo ? threads.find((thread) => thread.id === replyTo.threadId) : null;
   const replyName = replyTo ? channelMessageAuthorName(replyTo, agents, accountProfile.name) : "";
 
@@ -11886,92 +11980,7 @@ function ChannelsPage({
                 {goalSetup.error ? <p role="alert" className="mt-2 text-sm text-destructive">{goalSetup.error}</p> : null}
                 {goalSetup.objective && !goalSetupRunning ? <Button variant="outline" size="sm" className="mt-3" onClick={() => onDispatch?.(channel.id, { prompt: goalSetup.objective, resumeGoal: true })}>{goalSetup.status === "failed" ? "Retry team setup" : "Resume team setup"}</Button> : null}
               </div> : null}
-              <ChannelStream
-                channel={channel}
-                threadedReplies={chatSettings.threadedReplies === true}
-                copy={copy}
-                onTeamProposal={(message, decision) => onTeamProposal?.(channel.id, message, decision)}
-                messages={streamWithGitEvents}
-                renderEvent={(event) => (!isGitEvent(event) ? null : (
-                  <GitEventRow
-                    event={event}
-                    copy={copy}
-                    locale={locale}
-                    onOpen={(item) => item?.url && window.open(item.url, "_blank", "noopener")}
-                  />
-                ))}
-                agents={agents}
-                userName={accountProfile.name}
-                locale={locale}
-                lastReadAt={lastReadAt}
-                reactionsByMessage={reactionsByMessage}
-                renderBody={(message) => {
-                  const found = message.workflowRunId ? findWorkflowRun(channelWorkflows, message.workflowRunId) : null;
-                  if (message.workflowApproval) {
-                    return (
-                      <div data-message-id={message.id}>
-                        {found ? (
-                          <WorkflowRunMessage run={found.run} workflow={found.workflow} members={agents} showName={message.role !== "system"} onApprove={onApproveWorkflowRun} onDecline={onDeclineWorkflowRun} copy={copy} />
-                        ) : (
-                          <span className="text-muted-foreground">{message.body}</span>
-                        )}
-                      </div>
-                    );
-                  }
-                  return (
-                    <div data-message-id={message.id}>
-                      {message.workflowRunId ? (
-                        <WorkflowTag workflow={found?.workflow || { name: message.workflowName || "" }} run={found?.run} stepId={message.stepId} showName={message.role !== "system"} copy={copy} className="mb-1" />
-                      ) : null}
-                      <div className={message.role === "user" ? "chat-user-bubble" : message.status !== "error" && (message.role === "agent" || message.agentId) ? "chat-agent-answer" : undefined}>
-                        <MarkdownBlocks text={message.role === "user" ? message.body || "" : withoutRecoveryNotices(message.body || "")} />
-                      </div>
-                      {(message.attachments || []).map((attachment) => (
-                        <MediaAttachment key={attachment.id} attachment={attachment} anchors={channelAnchors} onAnchor={addAnchorToDraft} copy={copy} />
-                      ))}
-                      {message.role === "agent" || message.agentId ? (
-                        <AgentWorkDetails message={message} isLoading={message.status === "loading"} durationLabel={messageDurationLabel(message)} copy={copy} mode={chatSettings.workDetails} />
-                      ) : null}
-                    </div>
-                  );
-                }}
-                renderAvatar={(message) => <ChannelMessageAvatar message={message} agents={agents} />}
-                renderMemberAvatar={(agent, avatarClassName) => <AgentAvatar agent={agent} className={avatarClassName} />}
-                repliedLabel={copy.repliedLabel || "replied"}
-                onSetUpReactionFlow={() => setReactionFlow({ emoji: "\u{1F680}", action: "prompt", memberId: members[0]?.id || "", prompt: "", url: "", method: "POST" })}
-                setUpFlowLabel={copy.setUpReactionFlow || "Make a reaction do something…"}
-                authorName={(message) => (message.role === "system" && message.workflowRunId ? message.workflowName || copy.workflow || "Workflow" : channelMessageAuthorName(message, agents, accountProfile.name))}
-                onReact={onReact}
-                onReply={(message) => setReplyTo(message)}
-                renderActions={(message) => {
-                  const body = String(message.body || "").trim();
-                  if (!body || message.status === "loading") return null;
-                  const agentMessage = message.role === "agent" || message.agentId;
-                  return (
-                    <>
-                      {agentMessage ? <ReadAloudButton compact text={message.body} message={message} memberId={message.agentId || ""} copy={copy} /> : null}
-                      <CopyButton text={message.role === "user" ? message.body || "" : withoutRecoveryNotices(message.body || "")} label="Copy message" />
-                    </>
-                  );
-                }}
-                emptyLabel={needsGoal ? null : members.length ? (
-                  // Say who is here and how a message reaches them.
-                  <>
-                    {copy.channelNoThreads}{" "}
-                    {`${members.slice(0, 3).map((member) => member.name).join(", ")}${members.length > 3 ? ` and ${members.length - 3} more` : ""} ${members.length === 1 ? "is" : "are"} in this channel. A message goes to everyone; start it with @${members[0].name} to ask one of them.`}
-                  </>
-                ) : (
-                  // An empty channel can do nothing; say how to fix that here.
-                  <>
-                    {copy.channelNoMembers}{" "}
-                    <button type="button" className="font-medium text-foreground underline-offset-4 hover:underline" onClick={() => setManageMembersOpen(true)}>
-                      {copy.addChannelMembers || "Add members"}
-                    </button>
-                  </>
-                )}
-                newLabel={copy.newMessages || "New"}
-                typingLabel={copy.isTyping || "is typing…"}
-              />
+              {channelStreamElement}
             </div>
           </ScrollArea>
           )}
