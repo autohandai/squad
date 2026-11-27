@@ -133,6 +133,7 @@
     "check:fresh-install": "node scripts/check-fresh-install.mjs",
     "check:runtime-source-staging": "node scripts/check-runtime-source-staging.mjs",
     "check:channels:browser": "node scripts/verify-channel-browser.mjs",
+    "check:channel-history:browser": "node scripts/check-channel-history-browser.mjs",
     "check:web": "bun run build",
     "check:render": "node scripts/check-render.mjs",
     "check:chats:browser": "node scripts/check-chats-browser.mjs",

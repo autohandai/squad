@@ -1382,6 +1382,21 @@ const MISSION_CONTROL_ROUTE = "/work";
 const LEGACY_WORK_ROUTE = "/mission-control";
 const SQUAD_DIRECTORY_ROUTE = "/squad";
 const CHANNELS_ROUTE = "/channels";
+// Channel sync (issues #86, #87): changed messages only, coalesced, and split
+// so one request stays well under the bridge's 16 MiB body limit.
+const CHANNEL_SYNC_DELAY_MS = 400;
+const CHANNEL_SYNC_BATCH_BYTES = 6 * 1024 * 1024;
+function channelSyncBatches(messages) {
+  const batches = [[]];
+  let size = 0;
+  for (const message of messages) {
+    const bytes = JSON.stringify(message).length;
+    if (size + bytes > CHANNEL_SYNC_BATCH_BYTES && batches.at(-1).length) { batches.push([]); size = 0; }
+    batches.at(-1).push(message);
+    size += bytes;
+  }
+  return batches;
+}
 const INBOX_ROUTE = "/inbox";
 const AGENTS_ROUTE = "/agents";
 // The marketplace is a page in the main column, like Inbox (ADR-0261).
@@ -3827,7 +3842,7 @@ async function api(path, options = {}) {
   }
   if (!response.ok || !payload.success) {
     const route = String(path || "").split("?")[0];
-    throw new Error(plainSystemError(payload.error) || `${route} failed: ${response.status}`);
+    throw Object.assign(new Error(plainSystemError(payload.error) || `${route} failed: ${response.status}`), { status: response.status });
   }
   return payload.data;
 }
@@ -5363,24 +5378,43 @@ function App() {
     });
   }
 
+  const syncedChannelMessagesRef = useRef(new Map());
+  const syncedChannelMetaRef = useRef("");
+  const syncedChannelChainRef = useRef(Promise.resolve());
   // Mirror channel/thread state to the local bridge so the daemon can surface
   // the same channels.json in queue/run telemetry across reloads and restarts.
+  // Only what changed goes (issues #86, #87): the bridge merges records by id
+  // and keeps the newer updatedAt, so a message whose updatedAt it already has
+  // is left out. Sending the whole history (with every agent trace) on each
+  // change passed the 16 MiB request limit and re-serialised megabytes on
+  // every streamed update and every 750 ms reload.
   useEffect(() => {
-    if (!channelsBridgeReady) return;
-    api("/api/channels/sync", {
-      method: "PUT",
-      body: JSON.stringify({
-        channels,
-        threads: Object.values(channelThreads).flat(),
-        messages: Object.values(messagesByChannel).flat(),
-      }),
-    }).then(() => {
-      // A later sync that lands clears the earlier failure; it used to sit
-      // over every page, Settings included, until some other channel action.
-      setChannelOperationError((current) => (current.startsWith("Channel changes could not be saved") ? "" : current));
-    }).catch((error) => {
-      setChannelOperationError(`Channel changes could not be saved: ${clause(error.message)}. Reconnect and try again.`);
-    });
+    if (!channelsBridgeReady) return undefined;
+    const timer = window.setTimeout(() => {
+      const synced = syncedChannelMessagesRef.current;
+      const changed = Object.values(messagesByChannel).flat().filter((message) => message?.id && synced.get(message.id) !== String(message.updatedAt));
+      const meta = { channels, threads: Object.values(channelThreads).flat() };
+      const metaKey = JSON.stringify(meta);
+      if (!changed.length && metaKey === syncedChannelMetaRef.current) return;
+      const batches = channelSyncBatches(changed);
+      syncedChannelChainRef.current = syncedChannelChainRef.current.catch(() => {}).then(async () => {
+        try {
+          for (const [index, batch] of batches.entries()) {
+            await api("/api/channels/sync", { method: "PUT", body: JSON.stringify(index === 0 ? { ...meta, messages: batch } : { messages: batch }) });
+            for (const message of batch) synced.set(message.id, String(message.updatedAt));
+          }
+          syncedChannelMetaRef.current = metaKey;
+          // A later sync that lands clears the earlier failure; it used to sit
+          // over every page, Settings included, until some other channel action.
+          setChannelOperationError((current) => (current.startsWith("Channel changes could not be saved") ? "" : current));
+        } catch (error) {
+          setChannelOperationError(error?.status === 413
+            ? "Channel changes could not be saved: one message is too large for the local bridge to store."
+            : `Channel changes could not be saved: ${clause(error.message)}. Reconnect and try again.`);
+        }
+      });
+    }, CHANNEL_SYNC_DELAY_MS);
+    return () => window.clearTimeout(timer);
   }, [channels, channelThreads, messagesByChannel, channelsBridgeReady]);
 
   useEffect(() => {
@@ -6143,6 +6177,8 @@ function App() {
             });
           }
           if (Array.isArray(data.messages) && data.messages.length) {
+            // What the bridge already holds: the sync leaves these out until they change.
+            for (const message of data.messages) if (message?.id) syncedChannelMessagesRef.current.set(message.id, String(message.updatedAt));
             setMessagesByChannel((current) => {
               const bridgeMessages = normalizeChannelMessagesCopy(data.messages);
               const next = { ...current };
