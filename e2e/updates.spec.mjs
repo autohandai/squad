@@ -61,7 +61,11 @@ test("new release is discovered, preferences persist, and install waits for cons
     localStorage.setItem("autohandSquad.v1.theme", JSON.stringify({ mode: "dark", lightTheme: "autohand-light", darkTheme: "autohand-dark" }));
   });
   await page.goto(bridge.origin + "/settings/updates");
-  await expect.poll(() => announcementReads).toBeGreaterThan(0);
+  // Squad news loads only once the window knows the account is signed in and
+  // past onboarding; since the one startup surface (ADR-0288) that lands
+  // 3.4–5.9 s after the page opens on a fresh bridge (measured), so the
+  // default 5 s poll raced it.
+  await expect.poll(() => announcementReads, { timeout: 20_000 }).toBeGreaterThan(0);
   const update = page.getByTestId("software-update");
   await expect(update.getByRole("status")).toHaveText(`Version ${availableVersion} is available`);
   await expect(update).not.toContainText(`Updated to ${installedVersion}.`);
