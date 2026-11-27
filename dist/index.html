@@ -36,10 +36,26 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <title>Autohand Squad</title>
+    <link rel="preload" href="/fonts/AutohandSans-Variable.woff2" as="font" type="font/woff2" crossorigin />
+    <!-- Both marks, so the one the theme picks is already here when the
+         startup surface paints: the native page showed it from its first frame. -->
+    <link rel="preload" href="/brand/autohand-squad/autohand-squad-mark-light.webp" as="image" />
+    <link rel="preload" href="/brand/autohand-squad/autohand-squad-mark-dark.webp" as="image" />
     <style>
-      /* The boot screen. Kept in the document so it paints on the first
-         frame, before any stylesheet or bundle has been fetched. */
-      #boot {
+      /* The native loading page's typeface, so the name does not change
+         face when the bundle's own stylesheet arrives. */
+      @font-face {
+        font-family: "Autohand Sans";
+        src: url("/fonts/AutohandSans-Variable.woff2") format("woff2");
+        font-weight: 400 700;
+        font-display: swap;
+      }
+      /* The startup surface (ADR-0288). One surface from the first frame to
+         the app: this inline copy paints before any bundle, and React's
+         StartupScreen renders the same classes while ownership is read and
+         the bridge answers, so every handover is a swap of identical pixels.
+         The native shell's loading page (src-tauri/loading) draws the same. */
+      .boot-surface {
         position: fixed;
         inset: 0;
         display: flex;
@@ -47,31 +63,46 @@
         align-items: center;
         justify-content: center;
         gap: 10px;
+        padding: 24px;
+        box-sizing: border-box;
+        text-align: center;
         background: #0a0a0a;
         color: #fafafa;
-        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-family: "Autohand Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-size: 15px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
         z-index: 40;
       }
       @media (prefers-color-scheme: light) {
-        #boot { background: #ffffff; color: #171717; }
+        .boot-surface { background: #ffffff; color: #171717; }
       }
       /* The theme chosen in Settings wins over the system's (set below). */
-      #boot[data-mode="light"] { background: #ffffff; color: #171717; }
-      #boot[data-mode="dark"] { background: #0a0a0a; color: #fafafa; }
-      #boot-mark { border-radius: 14px; filter: url(#boot-liquid); }
-      #boot-name { margin: 2px 0 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
-      #boot-status { margin: 0; font-size: 12px; opacity: 0.62; }
+      .boot-surface[data-mode="light"] { background: #ffffff; color: #171717; }
+      .boot-surface[data-mode="dark"] { background: #0a0a0a; color: #fafafa; }
+      .boot-mark { display: block; width: 56px; height: 56px; border-radius: 14px; filter: url(#boot-liquid); }
+      .boot-name { margin: 2px 0 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+      .boot-status { margin: 0; min-height: 1.6em; max-width: 22rem; font-size: 12px; opacity: 0.62; }
+      .boot-status[data-tone="alert"] { opacity: 0.9; }
+      .boot-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
+      .boot-actions button { font: inherit; font-size: 13px; font-weight: 500; color: inherit; background: transparent; border: 1px solid color-mix(in srgb, currentColor 22%, transparent); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
+      .boot-actions button[data-quiet] { border-color: transparent; }
+      .boot-actions button:disabled { opacity: 0.5; cursor: default; }
       /* Three birds of the squad on a hairline perch (ADR-0245): they land,
-         then a hop passes along them while the bundle loads. The mark stays
-         still. vite.config.js draws the faces in at build time. */
-      #boot-flock { position: relative; display: flex; gap: 10px; margin: 14px 0 6px; padding-bottom: 5px; }
-      #boot-flock::after { content: ""; position: absolute; left: -6px; right: -6px; bottom: 4px; height: 1px; background: currentColor; opacity: 0.16; }
-      #boot-flock > span { display: block; width: 26px; height: 26px; transform-origin: 50% 100%; animation: boot-land 520ms cubic-bezier(0.3, 1.35, 0.5, 1) both, boot-hop 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
-      #boot-flock > span:nth-child(2) { animation-delay: 80ms, 650ms; }
-      #boot-flock > span:nth-child(3) { animation-delay: 160ms, 780ms; }
-      #boot-flock > span:first-child { animation-delay: 0ms, 520ms; }
-      #boot-flock > span { border-radius: 50%; overflow: hidden; }
-      #boot-flock svg { display: block; width: 100%; height: 100%; }
+         then a hop passes along them while Squad starts. The mark stays
+         still. vite.config.js draws the faces in at build time; the React
+         surface draws the same three and does not land them again. */
+      .boot-flock { position: relative; display: flex; gap: 10px; margin: 14px 0 6px; padding-bottom: 5px; }
+      .boot-flock::after { content: ""; position: absolute; left: -6px; right: -6px; bottom: 4px; height: 1px; background: currentColor; opacity: 0.16; }
+      .boot-flock > span { display: block; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; transform-origin: 50% 100%; animation: boot-land 520ms cubic-bezier(0.3, 1.35, 0.5, 1) both, boot-hop 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+      .boot-flock > span:first-child { animation-delay: 0ms, 520ms; }
+      .boot-flock > span:nth-child(2) { animation-delay: 80ms, 650ms; }
+      .boot-flock > span:nth-child(3) { animation-delay: 160ms, 780ms; }
+      .boot-surface[data-settled] .boot-flock > span { animation: boot-hop 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+      .boot-surface[data-settled] .boot-flock > span:first-child { animation-delay: 520ms; }
+      .boot-surface[data-settled] .boot-flock > span:nth-child(2) { animation-delay: 650ms; }
+      .boot-surface[data-settled] .boot-flock > span:nth-child(3) { animation-delay: 780ms; }
+      .boot-flock svg { display: block; width: 100%; height: 100%; }
       @keyframes boot-land {
         0% { opacity: 0; transform: translateY(-14px); }
         100% { opacity: 1; transform: none; }
@@ -82,12 +113,13 @@
         24% { transform: translateY(0) scale(1.06, 0.93); }
       }
       @media (prefers-reduced-motion: reduce) {
-        #boot-flock > span { animation: none; }
-        #boot-mark { filter: none; }
+        .boot-flock > span, .boot-surface[data-settled] .boot-flock > span { animation: none; }
+        .boot-mark { filter: none; }
       }
+      .boot-surface[data-compact] .boot-status { font-size: 13px; }
     </style>
-    <script type="module" crossorigin src="/assets/index-C6UydhV0.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Xa577Nkj.css">
+    <script type="module" crossorigin src="/assets/index-CKh-iv1n.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-C3Yq8oB1.css">
   </head>
   <body>
     <!-- Shown before the bundle has parsed, so the window is never blank.
@@ -102,11 +134,11 @@
         <feDisplacementMap in="SourceGraphic" in2="noise" scale="3.2" xChannelSelector="R" yChannelSelector="G" />
       </filter>
     </svg>
-    <div id="boot" data-boot>
-      <img id="boot-mark" src="/brand/autohand-squad/autohand-squad-mark-dark.webp" alt="" width="56" height="56" decoding="async" />
-      <p id="boot-name">Autohand Squad</p>
-      <div id="boot-flock" aria-hidden="true"><span><svg xmlns="http://www.w3.org/2000/svg" class="size-full" viewBox="0 0 100 100" role="img" aria-hidden="true"><image href="/avatars/birds/256/eveninggrosbeak.webp" width="100" height="100" preserveAspectRatio="xMidYMid slice"/></svg></span><span><svg xmlns="http://www.w3.org/2000/svg" class="size-full" viewBox="0 0 100 100" role="img" aria-hidden="true"><image href="/avatars/birds/256/kiwi.webp" width="100" height="100" preserveAspectRatio="xMidYMid slice"/></svg></span><span><svg xmlns="http://www.w3.org/2000/svg" class="size-full" viewBox="0 0 100 100" role="img" aria-hidden="true"><image href="/avatars/birds/256/silvergull.webp" width="100" height="100" preserveAspectRatio="xMidYMid slice"/></svg></span></div>
-      <p id="boot-status">Waking the squad…</p>
+    <div id="boot" class="boot-surface" data-boot data-startup>
+      <img id="boot-mark" class="boot-mark" src="/brand/autohand-squad/autohand-squad-mark-dark.webp" alt="" width="56" height="56" decoding="async" />
+      <p id="boot-name" class="boot-name">Autohand Squad</p>
+      <div id="boot-flock" class="boot-flock" aria-hidden="true"><span><svg xmlns="http://www.w3.org/2000/svg" class="size-full" viewBox="0 0 100 100" role="img" aria-hidden="true"><image href="/avatars/birds/256/eveninggrosbeak.webp" width="100" height="100" preserveAspectRatio="xMidYMid slice"/></svg></span><span><svg xmlns="http://www.w3.org/2000/svg" class="size-full" viewBox="0 0 100 100" role="img" aria-hidden="true"><image href="/avatars/birds/256/kiwi.webp" width="100" height="100" preserveAspectRatio="xMidYMid slice"/></svg></span><span><svg xmlns="http://www.w3.org/2000/svg" class="size-full" viewBox="0 0 100 100" role="img" aria-hidden="true"><image href="/avatars/birds/256/silvergull.webp" width="100" height="100" preserveAspectRatio="xMidYMid slice"/></svg></span></div>
+      <p id="boot-status" class="boot-status" role="status" aria-live="polite">Starting Squad…</p>
     </div>
     <div id="root"></div>
     <script>
