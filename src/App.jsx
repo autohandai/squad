@@ -354,7 +354,7 @@ import { builtInTeamTemplates } from "@/data/team-templates";
 import { TEAM_BUILDS_STORAGE_KEY, buildFinishedEvent, buildMemberDraft, createTeamBuild, patchBuild as patchTeamBuildRecord, patchBuildMember as patchTeamBuildMember, pendingBuildMembers, resumeBuilds, teamDocumentFromProposal } from "@/lib/team-builder";
 import { duplicateCreationStash, hiddenMembers, hidePatch, markUnreadReadAt, orderMembers, pinPatch } from "@/lib/member-menus";
 import { planImport, presetTemplate, uniqueName, validateTeamFile } from "@/lib/teams";
-import { BootChecks } from "@/components/shell/BootChecks";
+import { StartupScreen } from "@/components/shell/StartupScreen";
 import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
 import { SquadSyncNotice, squadOwnerKey, useSquadOwners, useSquadOwnership } from "@/components/account/SquadOwnerSwitcher";
 import { SquadsSettings } from "@/components/settings/SquadsSettings";
@@ -5002,6 +5002,18 @@ function App() {
       // Ignore storage failures in private browsing or locked-down webviews.
     }
   }, [activeThemePreset, activeSkin, theme, themePreference]);
+
+  // The native loading page cannot read this window's storage, so the bridge
+  // keeps the theme mode for it: the next start paints in the person's theme
+  // from its first frame instead of the system's (ADR-0288).
+  const startupThemeSent = useRef("");
+  useEffect(() => {
+    if (!bridgeAnswered || startupThemeSent.current === themePreference.mode) return;
+    const mode = themePreference.mode;
+    api("/api/system/settings", { method: "PUT", body: JSON.stringify({ startupTheme: mode }) })
+      .then(() => { startupThemeSent.current = mode; })
+      .catch(() => {});
+  }, [bridgeAnswered, themePreference.mode]);
 
   // The layout is a device choice like the skin. Written at once so a second
   // window (and a reload during onboarding) reads the same arrangement.
@@ -10204,28 +10216,17 @@ function App() {
   // Until the bridge has answered once, show what is actually being waited
   // on rather than an empty shell. Every row is a real check (ADR-0033).
   if (!bridgeAnswered && routePath === "/quick-chat") {
-    return <div className="flex h-[100svh] items-center justify-center bg-background text-sm text-muted-foreground" role="status">Connecting to Squad…</div>;
+    return <StartupScreen status="Connecting to Squad…" mode={theme} compact />;
   }
 
   if (!bridgeAnswered) {
-    return (
-      <BootChecks
-        brand={<BrandMark theme={theme} className="size-14" />}
-        copy={localeCopy}
-        members={agents}
-        renderAvatar={(member, className) => <AgentAvatar agent={member} className={className} />}
-        checks={[
-          { id: "app", label: localeCopy.bootApp || "Interface loaded", state: "ok" },
-          {
-            id: "squad",
-            label: localeCopy.bootSquad || "Reading your squad",
-            state: agents.length ? "ok" : "waiting",
-            detail: agents.length ? String(agents.length) : "",
-          },
-          { id: "bridge", label: localeCopy.bootBridge || "Starting the local bridge", state: "waiting" },
-        ]}
-      />
-    );
+    // The one startup surface (ADR-0288): the same logo, birds and place as
+    // the native loading page and index.html, with the line saying what is
+    // actually being waited on (ADR-0033).
+    const status = agents.length
+      ? `${agents.length} ${agents.length === 1 ? localeCopy.memberReady || "member ready" : localeCopy.membersReady || "members ready"} · ${localeCopy.bootBridge || "Starting the local bridge"}…`
+      : `${localeCopy.bootSquad || "Reading your squad"}…`;
+    return <StartupScreen status={status} mode={theme} />;
   }
 
   if (routePath === "/quick-chat") {

@@ -213,6 +213,13 @@ fn main() {
                         }
                     })
                     .center();
+            // The loading page paints in the theme the person chose in
+            // Settings, not only the system's (ADR-0288).
+            if let Some(script) =
+                quick_chat_preferences::startup_theme_script(&quick_chat_preferences::read())
+            {
+                builder = builder.initialization_script(script);
+            }
             #[cfg(target_os = "macos")]
             {
                 // Overlay = full-size content view: the page extends under the

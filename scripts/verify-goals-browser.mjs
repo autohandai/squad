@@ -274,7 +274,7 @@ async function main() {
     await cdp.send("Network.setUserAgentOverride", { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/142.0.0.0 Safari/537.36 AutohandSquadDesktop/1.0", platform: "MacIntel" });
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
     await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installFixtures.toString()})(${JSON.stringify(fixtures)});` });
-    const navigate = async (path) => { await cdp.send("Page.navigate", { url: `${baseUrl}${path}` }); await waitFor(() => cdp.evaluate("Boolean(document.querySelector('.app-sidebar') && document.querySelector('main') && !document.body.innerText.includes('Waking the squad'))"), path); };
+    const navigate = async (path) => { await cdp.send("Page.navigate", { url: `${baseUrl}${path}` }); await waitFor(() => cdp.evaluate("Boolean(document.querySelector('.app-sidebar') && document.querySelector('main') && !document.querySelector('[data-startup]'))"), path); };
     const screenshot = async (name) => { await delay(250); const shot = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }); const path = join(artifacts, `${name}.png`); await writeFile(path, Buffer.from(shot.data, "base64")); report.screenshots.push(path); };
 
     for (const harness of ["autohand", "codex", "claude"]) {
@@ -481,12 +481,12 @@ async function main() {
     await cdp.send("Page.navigate", { url: `${baseUrl}/quick-chat?member=${agents[1].id}` });
     await waitFor(async () => (await bodyText()).includes("Connecting to Squad"), "compact bridge connection state");
     report.quickFirstPaint = await cdp.evaluate("({ text: document.body.innerText, portraits: document.querySelectorAll('img').length, connectingLines: (document.body.innerText.match(/Connecting to Squad/g) || []).length })");
-    assert(report.quickFirstPaint.portraits === 0 && report.quickFirstPaint.connectingLines === 1 && !report.quickFirstPaint.text.includes('Waking the squad'), "Initial compact connection paint has one line without logo/checklist overlap");
+    assert(report.quickFirstPaint.portraits === 0 && report.quickFirstPaint.connectingLines === 1 && !report.quickFirstPaint.text.includes('Starting Squad'), "Initial compact connection paint has one line without logo/checklist overlap");
     await waitFor(() => cdp.evaluate("!document.querySelector('#boot')"), "initial static boot exits before steady compact connection");
     report.quickStartup = await cdp.evaluate("({ text: document.body.innerText, spinners: document.querySelectorAll('.animate-spin, .loading-ring').length, portraits: document.querySelectorAll('img').length, overflow: document.documentElement.scrollHeight > innerHeight || document.documentElement.scrollWidth > innerWidth })");
     assert.equal(report.quickStartup.portraits, 0, "Connecting quick chat does not render the full squad portrait wall");
     assert(report.quickStartup.spinners <= 1 && !report.quickStartup.overflow, "Compact startup has at most one waiting indicator and fits the window");
-    assert(!report.quickStartup.text.includes("Waking the squad"), "Compact startup does not repeat the main boot checklist");
+    assert(!report.quickStartup.text.includes("Starting Squad") && !report.quickStartup.text.includes("Reading your squad"), "Compact startup does not repeat the main boot checklist");
     await screenshot("quick-chat-connecting-380x520");
     await waitFor(() => cdp.evaluate("Boolean(document.querySelector('[data-testid=mac-quick-chat] textarea'))"), "quick chat plain composer");
     const selectedPortrait = '[data-testid=quick-chat-member-carousel] button[data-member-id][aria-pressed=true]';

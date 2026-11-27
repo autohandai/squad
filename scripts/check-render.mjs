@@ -106,7 +106,7 @@ try {
   await cdp.send("Page.navigate", { url: `${origin}/` });
   // The app is up once #root holds elements and the boot text is gone, or
   // once the error boundary has rendered; either way the verdict is ready.
-  const probe = `(() => { const root = document.getElementById("root"); const text = document.body.innerText || ""; return { mounted: Boolean(root && root.children.length), boundary: /could not render/i.test(text) ? text.slice(0, 300) : "", booting: /Waking the squad/i.test(text), length: text.length }; })()`;
+  const probe = `(() => { const root = document.getElementById("root"); const text = document.body.innerText || ""; return { mounted: Boolean(root && root.children.length), boundary: /could not render/i.test(text) ? text.slice(0, 300) : "", booting: Boolean(document.querySelector("[data-startup]")), length: text.length }; })()`;
   const state = await waitFor(async () => { const s = await cdp.evaluate(probe); return (s.mounted && !s.booting) || s.boundary ? s : null; }, "the app to mount", 30000);
   await delay(1500); // let the first effects (bridge polls, member hydration) run and throw if they will
   const final = await cdp.evaluate(probe);

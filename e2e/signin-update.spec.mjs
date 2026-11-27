@@ -131,7 +131,7 @@ test("the boot screen paints three birds on a perch before the bundle", async ({
     await page.goto("/");
     const birds = page.locator("#boot-flock > span > svg");
     await expect(birds).toHaveCount(3);
-    await expect(page.locator("#boot-status")).toHaveText("Waking the squad…");
+    await expect(page.locator("#boot-status")).toHaveText("Starting Squad…");
     // The mark itself stays still (DESIGN.md: never animate the logo).
     expect(await page.evaluate(() => getComputedStyle(document.getElementById("boot-mark")).animationName)).toBe("none");
     expect(await page.evaluate(() => getComputedStyle(document.querySelector("#boot-flock > span")).animationName)).toContain("boot-hop");

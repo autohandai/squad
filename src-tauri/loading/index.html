@@ -9,7 +9,9 @@
      window's frontend while the Rust bootstrap runs on a worker thread, so it
      is a standalone page: its mark, birds and typeface sit beside it.
 
-     It is the app's own boot screen (index.html #boot, ADR-0245), drawn here
+     One startup surface (ADR-0288): index.html's .boot-surface and React's
+     StartupScreen draw exactly this, so the handovers change only the status
+     line. It is the app's own boot screen (index.html #boot, ADR-0245), drawn here
      first (ADR-0276): the same background, the mark at 56 px with the liquid
      ripple of the phone's launch, the name, and the same three birds landing
      on their perch. The owner found the old checklist page "out of place"
@@ -21,14 +23,21 @@
     font-weight: 400 700;
     font-display: block;
   }
-  :root { color-scheme: light dark; --bg: #ffffff; --fg: #171717; --muted: #737373; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #0a0a0a; --fg: #fafafa; --muted: #8a8a8a; } }
+  :root { color-scheme: light dark; --bg: #ffffff; --fg: #171717; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0a0a0a; --fg: #fafafa; } }
+  /* The theme chosen in Squad's Settings, handed over by the shell before
+     this page paints (ADR-0288), wins over the system's: a dark start
+     screen turning into a light app read as three different screens. */
+  :root[data-mode="light"] { color-scheme: light; --bg: #ffffff; --fg: #171717; }
+  :root[data-mode="dark"] { color-scheme: dark; --bg: #0a0a0a; --fg: #fafafa; }
   html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); }
   body { font: 15px/1.6 "Autohand Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
   main { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; box-sizing: border-box; text-align: center; }
-  .mark { width: 56px; height: 56px; display: block; object-fit: contain; filter: url(#liquid); }
+  .mark { width: 56px; height: 56px; display: block; object-fit: contain; border-radius: 14px; filter: url(#liquid); }
   .mark.for-dark { display: none; }
   @media (prefers-color-scheme: dark) { .mark.for-dark { display: block; } .mark.for-light { display: none; } }
+  :root[data-mode="light"] .mark.for-dark { display: none; } :root[data-mode="light"] .mark.for-light { display: block; }
+  :root[data-mode="dark"] .mark.for-dark { display: block; } :root[data-mode="dark"] .mark.for-light { display: none; }
   .name { margin: 2px 0 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
   /* The squad on a hairline perch: they land, then a hop passes along them. */
   .flock { position: relative; display: flex; gap: 10px; margin: 14px 0 6px; padding-bottom: 5px; }
@@ -40,7 +49,7 @@
   .flock img:nth-child(3) { animation-delay: 160ms, 780ms; }
   @keyframes land { 0% { opacity: 0; transform: translateY(-14px); } 100% { opacity: 1; transform: none; } }
   @keyframes hop { 0%, 36%, 100% { transform: none; } 12% { transform: translateY(-7px) scale(0.97, 1.05); } 24% { transform: translateY(0) scale(1.06, 0.93); } }
-  .status { margin: 0; font-size: 12px; color: var(--muted); min-height: 1.6em; max-width: 22rem; }
+  .status { margin: 0; font-size: 12px; opacity: 0.62; min-height: 1.6em; max-width: 22rem; }
   @media (prefers-reduced-motion: reduce) {
     .flock img { animation: none; }
     .mark { filter: none; }

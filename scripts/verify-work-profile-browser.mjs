@@ -268,7 +268,7 @@ async function main() {
     await cdp.send("Network.setUserAgentOverride", { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/142.0.0.0 Safari/537.36 AutohandSquadDesktop/1.0", platform: "MacIntel" });
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
     await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installFixtures.toString()})(${JSON.stringify(fixtures)});` });
-    const navigate = async (path) => { await cdp.send("Page.navigate", { url: `${baseUrl}${path}` }); await waitFor(() => cdp.evaluate("Boolean(document.querySelector('main') && !document.body.innerText.includes('Waking the squad'))"), path); };
+    const navigate = async (path) => { await cdp.send("Page.navigate", { url: `${baseUrl}${path}` }); await waitFor(() => cdp.evaluate("Boolean(document.querySelector('main') && !document.querySelector('[data-startup]'))"), path); };
     const screenshot = async (name) => { await delay(250); const shot = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }); const path = join(artifacts, `${name}.png`); await writeFile(path, Buffer.from(shot.data, "base64")); report.screenshots.push(path); };
     const geometry = () => cdp.evaluate(`(() => { const sidebar = document.querySelector('.app-sidebar'); const image = sidebar?.querySelector('img'); const rect = image?.getBoundingClientRect(); return { shell: document.documentElement.dataset.shell, platform: document.documentElement.dataset.platform, x: rect?.x, y: rect?.y, width: rect?.width, height: rect?.height, paddingTop: getComputedStyle(sidebar).paddingTop, headerHeight: sidebar?.querySelector('[data-tauri-drag-region]')?.getBoundingClientRect().height, clipped: rect ? rect.y < sidebar.getBoundingClientRect().y : true }; })()`);
     if (!process.env.AUTOHAND_VERIFY_UPDATES_ONLY) {
@@ -402,12 +402,12 @@ async function main() {
         // Mobile hides the desktop sidebar. Navigate and wait for the actual
         // work filters rather than the desktop-only root used above.
         await cdp.send("Page.navigate", { url: `${baseUrl}/work?view=needs-you` });
-        await waitFor(() => cdp.evaluate("Boolean(document.querySelector('[aria-label=\"Work view\"]') && !document.body.innerText.includes('Waking the squad'))"), `${mode} ${width} Needs you`);
+        await waitFor(() => cdp.evaluate("Boolean(document.querySelector('[aria-label=\"Work view\"]') && !document.querySelector('[data-startup]'))"), `${mode} ${width} Needs you`);
         const work = await cdp.evaluate("({ viewport: innerWidth, scrollWidth: document.documentElement.scrollWidth, bodyScrollWidth: document.body.scrollWidth, theme: document.documentElement.className })");
         assert(work.scrollWidth <= width && work.bodyScrollWidth <= width, `No horizontal overflow in ${mode} ${width} Needs you`);
         await screenshot(`needs-you-${mode}-${width}`);
         await cdp.send("Page.navigate", { url: `${baseUrl}/conversations/new?member=${agents[0].id}` });
-        await waitFor(() => cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(triggerSelector)}) && !document.body.innerText.includes('Waking the squad'))`), `${mode} ${width} DM`);
+        await waitFor(() => cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(triggerSelector)}) && !document.querySelector('[data-startup]'))`), `${mode} ${width} DM`);
         await openAt('[data-slot="avatar"]');
         const preview = await cdp.evaluate("(() => { const rect = document.querySelector('[data-slot=popover-content]').getBoundingClientRect(); return { x: rect.x, right: rect.right, viewport: innerWidth, scrollWidth: document.documentElement.scrollWidth }; })()");
         assert(preview.x >= 0 && preview.right <= width && preview.scrollWidth <= width, `Preview fits ${mode} ${width}`);
@@ -528,7 +528,7 @@ async function main() {
     report.appInformation = {};
     const navigateInformation = async (page) => {
       await cdp.send("Page.navigate", { url: `${baseUrl}/app-info/${page}?window=1` });
-      await waitFor(() => cdp.evaluate(`Boolean(document.querySelector('main[data-app-information=${JSON.stringify(page)}]') && !document.body.innerText.includes('Loading app information') && !document.body.innerText.includes('Waking the squad'))`), `standalone ${page} information window`);
+      await waitFor(() => cdp.evaluate(`Boolean(document.querySelector('main[data-app-information=${JSON.stringify(page)}]') && !document.body.innerText.includes('Loading app information') && !document.querySelector('[data-startup]'))`), `standalone ${page} information window`);
     };
     await navigateInformation("about");
     const about = await cdp.evaluate("({ text: document.querySelector('main').innerText, hasSidebar: Boolean(document.querySelector('.app-sidebar')), requests: window.__verifyRequests })");

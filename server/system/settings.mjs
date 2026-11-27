@@ -20,7 +20,11 @@ export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
   autoCheckUpdates: true,
   autoDownloadUpdates: false,
   avatarStyle: "flat",
+  // The window's theme mode, so the native loading page paints in the
+  // person's theme before the app can say (ADR-0288).
+  startupTheme: "system",
 });
+export const STARTUP_THEMES = ["system", "light", "dark"];
 
 export function settingsPath(squadStateDir) {
   return join(squadStateDir, SETTINGS_FILE);
@@ -39,13 +43,14 @@ export function normalizeSystemSettings(input) {
     autoCheckUpdates: typeof source.autoCheckUpdates === "boolean" ? source.autoCheckUpdates : DEFAULT_SYSTEM_SETTINGS.autoCheckUpdates,
     autoDownloadUpdates: source.autoDownloadUpdates === true,
     avatarStyle: AVATAR_STYLES.includes(source.avatarStyle) ? source.avatarStyle : "flat",
+    startupTheme: STARTUP_THEMES.includes(source.startupTheme) ? source.startupTheme : "system",
   };
 }
 
 /** The public shape: known keys only. */
 export function publicSystemSettings(settings) {
   const normalized = normalizeSystemSettings(settings);
-  return { sidebarLiquidGlass: normalized.sidebarLiquidGlass, quickChatAppearance: normalized.quickChatAppearance, quickChatEnabled: normalized.quickChatEnabled, quickChatMenuBarMode: normalized.quickChatMenuBarMode, quickChatShowUsage: normalized.quickChatShowUsage, menuBarAttentionDot: normalized.menuBarAttentionDot, autoCheckUpdates: normalized.autoCheckUpdates, autoDownloadUpdates: normalized.autoDownloadUpdates, avatarStyle: normalized.avatarStyle };
+  return { sidebarLiquidGlass: normalized.sidebarLiquidGlass, quickChatAppearance: normalized.quickChatAppearance, quickChatEnabled: normalized.quickChatEnabled, quickChatMenuBarMode: normalized.quickChatMenuBarMode, quickChatShowUsage: normalized.quickChatShowUsage, menuBarAttentionDot: normalized.menuBarAttentionDot, autoCheckUpdates: normalized.autoCheckUpdates, autoDownloadUpdates: normalized.autoDownloadUpdates, avatarStyle: normalized.avatarStyle, startupTheme: normalized.startupTheme };
 }
 
 export async function readSystemSettings(squadStateDir) {
@@ -75,6 +80,7 @@ async function saveSystemSettings(squadStateDir, patch) {
     if (typeof patch.autoCheckUpdates === "boolean") next.autoCheckUpdates = patch.autoCheckUpdates;
     if (typeof patch.autoDownloadUpdates === "boolean") next.autoDownloadUpdates = patch.autoDownloadUpdates;
     if (AVATAR_STYLES.includes(patch.avatarStyle)) next.avatarStyle = patch.avatarStyle;
+    if (STARTUP_THEMES.includes(patch.startupTheme)) next.startupTheme = patch.startupTheme;
   }
   const path = settingsPath(squadStateDir);
   await mkdir(dirname(path), { recursive: true });

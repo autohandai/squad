@@ -26,6 +26,9 @@ pub(crate) struct Preferences {
     /// Flat, 3D or Clay for member portraits in the menu bar, matching the
     /// app's avatar style (ADR-0272).
     pub avatar_style: String,
+    /// The window's theme mode ("system", "light" or "dark"), so the loading
+    /// page paints in the person's theme before the app loads (ADR-0288).
+    pub startup_theme: String,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -37,8 +40,23 @@ impl Default for Preferences {
             menu_bar_attention_dot: true,
             sidebar_liquid_glass: true,
             avatar_style: "flat".into(),
+            startup_theme: "system".into(),
         }
     }
+}
+
+/// A script for the main window's loading page that applies the saved theme
+/// mode before it paints (ADR-0288). Only the shell's own page reads it: the
+/// app at the bridge's origin has its saved mode in its own storage.
+pub(crate) fn startup_theme_script(preferences: &Preferences) -> Option<String> {
+    let mode = match preferences.startup_theme.as_str() {
+        "light" => "light",
+        "dark" => "dark",
+        _ => return None,
+    };
+    Some(format!(
+        "(function(){{var l=window.location;if(l.protocol!=='tauri:'&&l.hostname!=='tauri.localhost')return;document.documentElement.dataset.mode='{mode}';}})();"
+    ))
 }
 pub(crate) fn read() -> Preferences {
     let Some(context) = autohand_squad_runtime::ownership::read_active_context(&default_paths())
@@ -445,6 +463,21 @@ pub(crate) async fn squad_refresh_quick_chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_theme_script_only_for_a_chosen_mode() {
+        let light = Preferences { startup_theme: "light".into(), ..Preferences::default() };
+        let script = super::startup_theme_script(&light).expect("light gets a script");
+        assert!(script.contains("dataset.mode='light'"));
+        assert!(script.contains("tauri:"), "only the shell's own page");
+        let dark = Preferences { startup_theme: "dark".into(), ..Preferences::default() };
+        assert!(super::startup_theme_script(&dark).unwrap().contains("'dark'"));
+        assert!(super::startup_theme_script(&Preferences::default()).is_none(), "system follows the system");
+        let odd = Preferences { startup_theme: "x';alert(1)//".into(), ..Preferences::default() };
+        assert!(super::startup_theme_script(&odd).is_none(), "only the two known modes");
+        let parsed: Preferences = serde_json::from_str(r#"{"startupTheme":"dark"}"#).unwrap();
+        assert_eq!(parsed.startup_theme, "dark");
+    }
     use autohand_squad_runtime::desktop_tray::TrayMember;
     #[test]
     fn active_icons_include_available_idle_members() {

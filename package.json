@@ -98,6 +98,7 @@
     "check:local-cache": "node scripts/check-local-cache.mjs",
     "check:storage-quota": "node scripts/check-owned-storage-quota.mjs",
     "check:member-files": "node scripts/check-member-files.mjs",
+    "check:one-startup": "node scripts/check-one-startup-surface-browser.mjs",
     "check:storage-full:browser": "node scripts/check-storage-full-browser.mjs",
     "check:member-draft": "node scripts/check-member-draft.mjs",
     "check:member-by-chat": "node scripts/check-member-by-chat.mjs",

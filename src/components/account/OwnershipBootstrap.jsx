@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { SignInGate } from "./SignInGate";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { StartupScreen } from "@/components/shell/StartupScreen";
 import { activateOwnership, invalidateOwnership } from "@/lib/ownership-client";
 import { ownedLocalStorage } from "@/lib/owned-storage";
 import { withCachedMemberViews } from "@/lib/member-menus";
@@ -157,23 +157,17 @@ export function OwnershipBootstrap({ children }) {
     cancelLogin={() => request('/api/harnesses/login?id=autohand', current.current, { method: 'DELETE' })}
     refreshAccount={() => refresh.current?.()} />;
   const busy = !error && (!context || ['verifying', 'changing', 'loading','draining'].includes(context.state));
-  return <main className="flex min-h-[100svh] items-center justify-center bg-background px-6 text-foreground">
-    <div className="w-full max-w-md space-y-4">
-      <div className="flex items-center gap-3">
-        {/* Startup uses the dark root tokens before the owned app sets a theme class. */}
-        <img src="/brand/autohand-squad/autohand-squad-mark-light.webp" width="48" height="48" alt="" aria-hidden="true" className="hidden size-12 shrink-0 object-contain [.light_&]:block" />
-        <img src="/brand/autohand-squad/autohand-squad-mark-dark.webp" width="48" height="48" alt="" aria-hidden="true" className="size-12 shrink-0 object-contain [.light_&]:hidden" />
-        <h1 className="text-xl font-semibold">Autohand Squad</h1>
-      </div>
-      <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">{busy ? <Spinner className="size-4" /> : null}{busy ? context?.state === 'draining'?'Finishing background work and preparing your Squad’s data…':context?.state === 'loading' ? 'Loading your Squad…' : 'Verifying your Squad…' : error || context?.error || 'Your Squad could not be verified.'}</p>
-      {!busy ? <div className="flex flex-wrap gap-2">
-        <Button variant="outline" onClick={retry}>Retry</Button>
-        {owners.map(item => <Button key={`${item.owner.kind}:${item.owner.id}`} variant="ghost" onClick={async () => {
-          try { await request('/api/ownership/select', current.current, { method: 'POST', body: JSON.stringify({ owner: item.owner, expectedGeneration: current.current.generation }) }); await refresh.current?.(); }
-          catch (failure) { setError(failure.message); }
-        }}>{item.label}{item.canWrite ? '' : ' · Read only'}</Button>)}
-        {context?.actor ? <Button variant="ghost" onClick={async () => { try { await request('/api/account/logout', current.current, { method: 'POST' }); } finally { void refresh.current?.(); } }}>Sign out</Button> : null}
-      </div> : null}
-    </div>
-  </main>;
+  // The same startup surface as index.html and the native loading page
+  // (ADR-0288): only the status line changes, and a problem keeps the place.
+  const status = busy && window.location.pathname === '/quick-chat' ? 'Connecting to Squad…' : busy ? context?.state === 'draining' ? 'Finishing background work and preparing your Squad’s data…' : context?.state === 'loading' ? 'Loading your Squad…' : 'Verifying your Squad…' : error || context?.error || 'Your Squad could not be verified.';
+  return <StartupScreen status={status} tone={busy ? undefined : 'alert'}>
+    {!busy ? <>
+      <button type="button" onClick={retry}>Retry</button>
+      {owners.map(item => <button type="button" data-quiet key={`${item.owner.kind}:${item.owner.id}`} onClick={async () => {
+        try { await request('/api/ownership/select', current.current, { method: 'POST', body: JSON.stringify({ owner: item.owner, expectedGeneration: current.current.generation }) }); await refresh.current?.(); }
+        catch (failure) { setError(failure.message); }
+      }}>{item.label}{item.canWrite ? '' : ' · Read only'}</button>)}
+      {context?.actor ? <button type="button" data-quiet onClick={async () => { try { await request('/api/account/logout', current.current, { method: 'POST' }); } finally { void refresh.current?.(); } }}>Sign out</button> : null}
+    </> : null}
+  </StartupScreen>;
 }
