@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Added
+
+- **Publish to the Marketplace from your iPhone.** Squad for iPhone can publish a member to the Marketplace through this computer: it shows exactly what will be public, blocks anything that looks like a secret, and lists what you've published with its status, so you can unpublish from the phone too.
+
 ### Fixed
 
 - **Channels with a long history save again.** Squad used to send a channel's whole history, with every agent's work details, each time anything changed, and once that passed 16 MB every save failed with "request body too large" (#87). Squad now sends only what changed, a few hundred bytes for a typical change.
