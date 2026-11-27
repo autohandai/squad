@@ -2870,7 +2870,11 @@ mod tests {
             gate.begin(|| true).unwrap(),
             instance.clone(),
         );
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        // A cold PowerShell on a loaded Windows runner can take longer than
+        // 15 s to write its first line (0.1.26's second run); the test is about
+        // stopping the group, not start-up speed.
+        let start_budget = if cfg!(windows) { 60 } else { 15 };
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(start_budget);
         while !fs::metadata(&sentinel).is_ok_and(|info| info.len() > 0) {
             assert!(
                 tokio::time::Instant::now() < deadline,
